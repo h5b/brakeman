@@ -3,6 +3,7 @@
 #of a Sexp.
 class Sexp
   attr_reader :paren
+  attr_accessor :original_line, :or_depth
   ASSIGNMENT_BOOL = [:gasgn, :iasgn, :lasgn, :cvdecl, :cdecl, :or, :and, :colon2]
 
   def method_missing name, *args
@@ -28,10 +29,10 @@ class Sexp
     end
 
     if line
-      s.original_line(self.original_line || self.line)
+      s.original_line = self.original_line || self.line
       s.line(line)
     else
-      s.original_line(self.original_line)
+      s.original_line = self.original_line
       s.line(self.line)
     end
 
@@ -62,29 +63,32 @@ class Sexp
   end
 
   def node_type= type
+    @my_hash_value = nil
     self[0] = type
+  end
+
+  #Join self and exp into an :or Sexp.
+  #Sets or_depth.
+  #Used for combining "branched" values in AliasProcessor.
+  def combine exp, line = nil
+    combined = Sexp.new(:or, self, exp).line(line || -2)
+
+    combined.or_depth = [self.or_depth, exp.or_depth].compact.reduce(0, :+) + 1
+
+    combined
   end
 
   alias :node_type :sexp_type
   alias :values :sexp_body # TODO: retire
 
   alias :old_push :<<
-  alias :old_line :line
-  alias :old_line_set :line=
-  alias :old_file_set :file=
-  alias :old_comments_set :comments=
   alias :old_compact :compact
   alias :old_fara :find_and_replace_all
   alias :old_find_node :find_node
 
-  def original_line line = nil
-    if line
-      @my_hash_value = nil
-      @original_line = line
-      self
-    else
-      @original_line ||= nil
-    end
+  def << arg
+    @my_hash_value = nil
+    old_push arg
   end
 
   def hash
@@ -93,21 +97,6 @@ class Sexp
     #Of course, Sexp is subclasses from Array, so who knows what might
     #be going on.
     @my_hash_value ||= super
-  end
-
-  def line num = nil
-    @my_hash_value = nil if num
-    old_line(num)
-  end
-
-  def line= *args
-    @my_hash_value = nil
-    old_line_set(*args)
-  end
-
-  def file= *args
-    @my_hash_value = nil
-    old_file_set(*args)
   end
 
   def compact
@@ -123,16 +112,6 @@ class Sexp
   def find_node *args
     @my_hash_value = nil
     old_find_node(*args)
-  end
-
-  def paren= arg
-    @my_hash_value = nil
-    @paren = arg
-  end
-
-  def comments= *args
-    @my_hash_value = nil
-    old_comments_set(*args)
   end
 
   #Iterates over the Sexps in an Sexp, skipping values that are not
@@ -163,6 +142,7 @@ class Sexp
   #Sets the target of a method call:
   def target= exp
     expect :call, :attrasgn
+    @my_hash_value = nil
     self[1] = exp
   end
 
@@ -186,6 +166,7 @@ class Sexp
   #Sets the arglist in a method call.
   def arglist= exp
     expect :call, :attrasgn
+    @my_hash_value = nil
     start_index = 3
 
     if exp.is_a? Sexp and exp.node_type == :arglist
@@ -271,6 +252,7 @@ class Sexp
   end
 
   def each_arg! &block
+    @my_hash_value = nil
     self.each_arg true, &block
   end
 
@@ -283,6 +265,7 @@ class Sexp
   #Sets first argument of a method call.
   def first_arg= exp
     expect :call, :attrasgn
+    @my_hash_value = nil
     self[3] = exp
   end
 
@@ -295,6 +278,7 @@ class Sexp
   #Sets second argument of a method call.
   def second_arg= exp
     expect :call, :attrasgn
+    @my_hash_value = nil
     self[4] = exp
   end
 
@@ -305,6 +289,7 @@ class Sexp
 
   def third_arg= exp
     expect :call, :attrasgn
+    @my_hash_value = nil
     self[5] = exp
   end
 
@@ -397,7 +382,11 @@ class Sexp
   #       s(:call, nil, :p, s(:arglist, s(:lvar, :y))))
   def block_args
     expect :iter, :call_with_block
-    self[2]
+    if self[2] == 0 # ?! See https://github.com/presidentbeef/brakeman/issues/331
+      return Sexp.new(:args)
+    else
+      self[2]
+    end
   end
 
   def first_param
@@ -462,6 +451,7 @@ class Sexp
   #a separate Sexp, but just a list of Sexps.
   def body= exp
     expect :defn, :defs, :methdef, :selfdef, :class, :module
+    @my_hash_value = nil
 
     case self.node_type
     when :defn, :methdef, :class

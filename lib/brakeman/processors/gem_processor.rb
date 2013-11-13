@@ -19,6 +19,11 @@ class Brakeman::GemProcessor < Brakeman::BaseProcessor
       @tracker.config[:rails_version] = $1
     end
 
+    if @tracker.config[:rails_version] =~ /^(3|4)\./ and not @tracker.options[:rails3]
+      @tracker.options[:rails3] = true
+      Brakeman.notify "[Notice] Detected Rails #$1 application"
+    end
+
     if @tracker.config[:gems][:rails_xss]
       @tracker.config[:escape_html] = true
 
@@ -40,11 +45,12 @@ class Brakeman::GemProcessor < Brakeman::BaseProcessor
 
     exp
   end
-
-  #Need to implement generic gem version check
+  
+  # Supports .rc2 but not ~>, >=, or <=
   def get_version name, gem_lock
-    match = gem_lock.match(/\s#{name} \((\d+.\d+.\d+.*)\)$/)
-    match[1] if match
+    if gem_lock =~ /\s#{name} \((\w(\.\w+)*)\)(?:\n|\r\n)/ 
+      $1
+    end 
   end
 
   def get_rails_version gem_lock
