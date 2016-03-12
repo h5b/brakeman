@@ -20,11 +20,11 @@ class Brakeman::CheckSingleQuotes < Brakeman::BaseCheck
     when version_between?('2.0.0', '2.3.14')
       message = "All Rails 2.x versions do not escape single quotes (CVE-2012-3464)"
     when version_between?('3.0.0', '3.0.16')
-      message = "Rails #{tracker.config[:rails_version]} does not escape single quotes (CVE-2012-3464). Upgrade to 3.0.17"
+      message = "Rails #{rails_version} does not escape single quotes (CVE-2012-3464). Upgrade to 3.0.17"
     when version_between?('3.1.0', '3.1.7')
-      message = "Rails #{tracker.config[:rails_version]} does not escape single quotes (CVE-2012-3464). Upgrade to 3.1.8"
+      message = "Rails #{rails_version} does not escape single quotes (CVE-2012-3464). Upgrade to 3.1.8"
     when version_between?('3.2.0', '3.2.7')
-      message = "Rails #{tracker.config[:rails_version]} does not escape single quotes (CVE-2012-3464). Upgrade to 3.2.8"
+      message = "Rails #{rails_version} does not escape single quotes (CVE-2012-3464). Upgrade to 3.2.8"
     else
       return
     end
@@ -33,7 +33,7 @@ class Brakeman::CheckSingleQuotes < Brakeman::BaseCheck
       :warning_code => :CVE_2012_3464,
       :message => message,
       :confidence => CONFIDENCE[:med],
-      :file => gemfile_or_environment,
+      :gem_info => gemfile_or_environment,
       :link_path => "https://groups.google.com/d/topic/rubyonrails-security/kKGNeMrnmiY/discussion"
   end
 

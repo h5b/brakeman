@@ -14,14 +14,14 @@ class Brakeman::CheckFilterSkipping < Brakeman::BaseCheck
         :warning_code => :CVE_2011_2929,
         :message => "Versions before 3.0.10 have a vulnerability which allows filters to be bypassed: CVE-2011-2929",
         :confidence => CONFIDENCE[:high],
-        :file => gemfile_or_environment,
+        :gem_info => gemfile_or_environment,
         :link_path => "https://groups.google.com/d/topic/rubyonrails-security/NCCsca7TEtY/discussion"
     end
   end
 
   def uses_arbitrary_actions?
     tracker.routes.each do |name, actions|
-      if actions == :allow_all_actions
+      if actions.include? :allow_all_actions
         return true
       end
     end

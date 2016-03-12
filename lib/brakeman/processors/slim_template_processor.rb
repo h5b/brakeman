@@ -25,7 +25,7 @@ class Brakeman::SlimTemplateProcessor < Brakeman::TemplateProcessor
         ignore
       elsif render? arg
         make_output make_render_in_view arg
-      elsif node_type? arg, :interp, :dstr
+      elsif string_interp? arg
         process_inside_interp arg
       elsif node_type? arg, :ignore
         ignore
@@ -38,24 +38,22 @@ class Brakeman::SlimTemplateProcessor < Brakeman::TemplateProcessor
       exp.arglist = process exp.arglist
       make_render_in_view exp
     else
-      call = make_call target, method, process_all!(exp.args)
-      call.original_line = exp.original_line
-      call.line(exp.line)
-      call
+      exp.arglist = process exp.arglist
+      exp
     end
   end
 
   def make_output exp
     s = Sexp.new :output, exp
     s.line(exp.line)
-    @current_template[:outputs] << s
+    @current_template.add_output s
     s
   end
 
   def make_escaped_output exp
     s = Sexp.new :escaped_output, exp.first_arg
     s.line(exp.line)
-    @current_template[:outputs] << s
+    @current_template.add_output s
     s
   end
 
@@ -63,7 +61,7 @@ class Brakeman::SlimTemplateProcessor < Brakeman::TemplateProcessor
   #Better to pull those values out directly.
   def process_inside_interp exp
     exp.map! do |e|
-      if node_type? e, :evstr, :string_eval
+      if node_type? e, :evstr
         e.value = process_interp_output e.value
         e
       else
@@ -96,7 +94,7 @@ class Brakeman::SlimTemplateProcessor < Brakeman::TemplateProcessor
   def is_escaped? exp
     call? exp and
     exp.target == TEMPLE_UTILS and
-    exp.method == :escape_html
+    (exp.method == :escape_html or exp.method == :escape_html_safe)
   end
 
   def render? exp

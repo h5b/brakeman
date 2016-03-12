@@ -5,8 +5,8 @@ class Brakeman::CallIndex
 
   #Initialize index with calls from FindAllCalls
   def initialize calls
-    @calls_by_method = Hash.new
-    @calls_by_target = Hash.new
+    @calls_by_method = Hash.new { |h, k| h[k] = [] }
+    @calls_by_target = Hash.new { |h, k| h[k] = [] }
 
     index_calls calls
   end
@@ -45,7 +45,7 @@ class Brakeman::CallIndex
 
     #Find calls with no explicit target
     #with either :target => nil or :target => false
-    elsif options.key? :target and not target and method
+    elsif (options.key? :target or options.key? :targets) and not target and method
       calls = calls_by_method method
       calls = filter_by_target calls, nil
 
@@ -53,7 +53,7 @@ class Brakeman::CallIndex
     elsif method
       calls = calls_by_method method
     else
-      notify "Invalid arguments to CallCache#find_calls: #{options.inspect}"
+      raise "Invalid arguments to CallCache#find_calls: #{options.inspect}"
     end
 
     return [] if calls.nil?
@@ -66,41 +66,35 @@ class Brakeman::CallIndex
   end
 
   def remove_template_indexes template_name = nil
-    @calls_by_method.each do |name, calls|
-      calls.delete_if do |call|
-        from_template call, template_name
-      end
-    end
-
-    @calls_by_target.each do |name, calls|
-      calls.delete_if do |call|
-        from_template call, template_name
+    [@calls_by_method, @calls_by_target].each do |calls_by|
+      calls_by.each do |name, calls|
+        calls.delete_if do |call|
+          from_template call, template_name
+        end
       end
     end
   end
 
   def remove_indexes_by_class classes
-    @calls_by_method.each do |name, calls|
-      calls.delete_if do |call|
-        call[:location][:type] == :class and classes.include? call[:location][:class]
-      end
-    end
-
-    @calls_by_target.each do |name, calls|
-      calls.delete_if do |call|
-        call[:location][:type] == :class and classes.include? call[:location][:class]
+    [@calls_by_method, @calls_by_target].each do |calls_by|
+      calls_by.each do |name, calls|
+        calls.delete_if do |call|
+          call[:location][:type] == :class and classes.include? call[:location][:class]
+        end
       end
     end
   end
 
   def index_calls calls
     calls.each do |call|
-      @calls_by_method[call[:method]] ||= []
       @calls_by_method[call[:method]] << call
 
-      unless call[:target].is_a? Sexp
-        @calls_by_target[call[:target]] ||= []
-        @calls_by_target[call[:target]] << call
+      target = call[:target]
+
+      if not target.is_a? Sexp
+        @calls_by_target[target] << call
+      elsif target.node_type == :params or target.node_type == :session
+        @calls_by_target[target.node_type] << call
       end
     end
   end
@@ -112,7 +106,7 @@ class Brakeman::CallIndex
     method = options[:method] || options[:methods]
 
     calls = calls_by_method method
-    
+
     return [] if calls.nil?
 
     calls = filter_by_chain calls, target
@@ -139,8 +133,10 @@ class Brakeman::CallIndex
   def calls_by_method method
     if method.is_a? Array
       calls_by_methods method
+    elsif method.is_a? Regexp
+      calls_by_methods_regex method
     else
-      @calls_by_method[method.to_sym] || []
+      @calls_by_method[method.to_sym]
     end
   end
 
@@ -155,8 +151,16 @@ class Brakeman::CallIndex
     calls
   end
 
+  def calls_by_methods_regex methods_regex
+    calls = []
+    @calls_by_method.each do |key, value|
+      calls.concat value if key.to_s.match methods_regex
+    end
+    calls
+  end
+
   def calls_with_no_target
-    @calls_by_target[nil] || []
+    @calls_by_target[nil]
   end
 
   def filter calls, key, value

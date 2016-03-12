@@ -45,6 +45,33 @@ module Brakeman::Util
     word + "s"
   end
 
+  #Returns a class name as a Symbol.
+  #If class name cannot be determined, returns _exp_.
+  def class_name exp
+    case exp
+    when Sexp
+      case exp.node_type
+      when :const
+        exp.value
+      when :lvar
+        exp.value.to_sym
+      when :colon2
+        "#{class_name(exp.lhs)}::#{exp.rhs}".to_sym
+      when :colon3
+        "::#{exp.value}".to_sym
+      when :self
+        @current_class || @current_module || nil
+      else
+        exp
+      end
+    when Symbol
+      exp
+    when nil
+      nil
+    else
+      exp
+    end
+  end
 
   #Takes an Sexp like
   # (:hash, (:lit, :key), (:str, "value"))
@@ -129,6 +156,10 @@ module Brakeman::Util
     exp.is_a? Sexp and exp.node_type == :str
   end
 
+  def string_interp? exp
+    exp.is_a? Sexp and exp.node_type == :dstr
+  end
+
   #Check if _exp_ represents a Symbol: s(:lit, :...)
   def symbol? exp
     exp.is_a? Sexp and exp.node_type == :lit and exp[1].is_a? Symbol
@@ -136,7 +167,8 @@ module Brakeman::Util
 
   #Check if _exp_ represents a method call: s(:call, ...)
   def call? exp
-    exp.is_a? Sexp and exp.node_type == :call
+    exp.is_a? Sexp and
+      (exp.node_type == :call or exp.node_type == :safe_call)
   end
 
   #Check if _exp_ represents a Regexp: s(:lit, /.../)
@@ -183,7 +215,7 @@ module Brakeman::Util
     if exp.is_a? Sexp
       return true if exp.node_type == :params or ALL_PARAMETERS.include? exp
 
-      if exp.node_type == :call
+      if call? exp
         if params? exp[1]
           return true
         elsif exp[2] == :[]
@@ -199,7 +231,7 @@ module Brakeman::Util
     if exp.is_a? Sexp
       return true if exp.node_type == :cookies or exp == COOKIES
 
-      if exp.node_type == :call
+      if call? exp
         if cookies? exp[1]
           return true
         elsif exp[2] == :[]
@@ -267,6 +299,10 @@ module Brakeman::Util
     call
   end
 
+  def rails_version
+    @tracker.config.rails_version
+  end
+
   #Return file name related to given warning. Uses +warning.file+ if it exists
   def file_for warning, tracker = nil
     if tracker.nil?
@@ -274,15 +310,15 @@ module Brakeman::Util
     end
 
     if warning.file
-      File.expand_path warning.file, tracker.options[:app_path]
-    elsif warning.template.is_a? Hash and warning.template[:file]
-      warning.template[:file]
+      File.expand_path warning.file, tracker.app_path
+    elsif warning.template and warning.template.file
+      warning.template.file
     else
       case warning.warning_set
       when :controller
         file_by_name warning.controller, :controller, tracker
       when :template
-        file_by_name warning.template[:name], :template, tracker
+        file_by_name warning.template.name, :template, tracker
       when :model
         file_by_name warning.model, :model, tracker
       when :warning
@@ -314,24 +350,24 @@ module Brakeman::Util
       end
     end
 
-    path = tracker.options[:app_path]
+    path = tracker.app_path
 
     case type
     when :controller
-      if tracker.controllers[name] and tracker.controllers[name][:file]
-        path = tracker.controllers[name][:file]
+      if tracker.controllers[name]
+        path = tracker.controllers[name].file
       else
         path += "/app/controllers/#{underscore(string_name)}.rb"
       end
     when :model
-      if tracker.models[name] and tracker.models[name][:file]
-        path = tracker.models[name][:file]
+      if tracker.models[name]
+        path = tracker.models[name].file
       else
         path += "/app/models/#{underscore(string_name)}.rb"
       end
     when :template
-      if tracker.templates[name] and tracker.templates[name][:file]
-        path = tracker.templates[name][:file]
+      if tracker.templates[name] and tracker.templates[name].file
+        path = tracker.templates[name].file
       elsif string_name.include? " "
         name = string_name.split[0].to_sym
         path = file_for tracker, name, :template
@@ -376,10 +412,29 @@ module Brakeman::Util
   end
 
   def relative_path file
-    if file and not file.empty? and file.start_with? '/'
-      Pathname.new(file).relative_path_from(Pathname.new(@tracker.options[:app_path])).to_s
+    pname = Pathname.new file
+    if file and not file.empty? and pname.absolute?
+      pname.relative_path_from(Pathname.new(@tracker.app_path)).to_s
     else
       file
+    end
+  end
+
+  #Convert path/filename to view name
+  #
+  # views/test/something.html.erb -> test/something
+  def template_path_to_name path
+    names = path.split("/")
+    names.last.gsub!(/(\.(html|js)\..*|\.rhtml)$/, '')
+    names[(names.index("views") + 1)..-1].join("/").to_sym
+  end
+
+  def github_url file, line=nil
+    if repo_url = @tracker.options[:github_url] and file and not file.empty? and file.start_with? '/'
+      url = "#{repo_url}/#{relative_path(file)}"
+      url << "#L#{line}" if line
+    else
+      nil
     end
   end
 
@@ -405,8 +460,15 @@ module Brakeman::Util
 
   # rely on Terminal::Table to build the structure, extract the data out in CSV format
   def table_to_csv table
+    return "" unless table
+
     Brakeman.load_brakeman_dependency 'terminal-table'
-    output = CSV.generate_line(table.headings.cells.map{|cell| cell.to_s.strip})
+    headings = table.headings
+    if headings.is_a? Array
+      headings = headings.first
+    end
+
+    output = CSV.generate_line(headings.cells.map{|cell| cell.to_s.strip})
     table.rows.each do |row|
       output << CSV.generate_line(row.cells.map{|cell| cell.to_s.strip})
     end

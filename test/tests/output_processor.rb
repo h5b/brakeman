@@ -22,7 +22,7 @@ class OutputProcessorTests < Test::Unit::TestCase
   end
 
   def test_output_local_variable
-    assert_output "(local x)", Sexp.new(:lvar, :x)
+    assert_output "x", Sexp.new(:lvar, :x)
   end
 
   def test_output_ignore
@@ -46,8 +46,8 @@ class OutputProcessorTests < Test::Unit::TestCase
   end
 
   def test_output_output
-    assert_output "[Output] (local x)", Sexp.new(:output,
-                                                 Sexp.new(:lvar, :x))
+    assert_output "[Output] x", Sexp.new(:output,
+                                         Sexp.new(:lvar, :x))
   end
 
   def test_output_output_format
@@ -79,10 +79,16 @@ class OutputProcessorTests < Test::Unit::TestCase
 
 
   def test_output_string_interp
-    assert_output '"#{@x}"', Sexp.new(:string_interp,
+    assert_output '"#{@x}"', Sexp.new(:dstr,
                                       "",
-                                      Sexp.new(:string_eval,
+                                      Sexp.new(:evstr,
                                                Sexp.new(:ivar, :@x)))
+
+    input = '"#{params[:plugin]}/app/views/#{params[:view]}"'
+    s_input = RubyParser.new.parse(input)
+
+    assert_output input,
+      Brakeman::BaseProcessor.new(nil).process(s_input)
   end
 
   def test_output_format
@@ -139,7 +145,7 @@ class OutputProcessorTests < Test::Unit::TestCase
 
   def test_output_call_with_block
     assert_output "x do\n y\n end",
-      Sexp.new(:call_with_block,
+      Sexp.new(:iter,
                Sexp.new(:call, nil, :x),
                Sexp.new(:args),
                Sexp.new(:call, nil, :y))
@@ -155,10 +161,33 @@ class OutputProcessorTests < Test::Unit::TestCase
                Sexp.new(:args),
                Sexp.new(:ivar, :@x))
 
-    assert_output "def x(y)\n  @x = (local y)\nend",
-      Sexp.new(:methdef,
+    assert_output "def x(y)\n  @x = y\nend",
+      Sexp.new(:defn,
                :x,
                Sexp.new(:args, :y),
                Sexp.new(:iasgn, :@x, Sexp.new(:lvar, :y)))
+  end
+
+  def test_regexp_output_with_flags
+    assert_output '/#{x}/i',
+      s(:dregx, "",
+        s(:evstr,
+          s(:call, nil, :x)),
+          1)
+  end
+
+  def test_rescue_block
+    assert_output "a rescue b",
+      s(:rescue, s(:call, nil, :a),
+        s(:resbody, s(:array), s(:call, nil, :b)))
+  end
+
+  def test_command_interpolation
+    assert_output '`#{x}`',
+      s(:dxstr, "", s(:evstr, s(:call, nil, :x)))
+
+
+    input = Brakeman::BaseProcessor.new(nil).process(RubyParser.new.parse('`1#{x}2#{y}3`'))
+    assert_output '`1#{x}2#{y}3`', input
   end
 end

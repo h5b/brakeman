@@ -1,21 +1,101 @@
 abort "Please run using test/test.rb" unless defined? BrakemanTester
 
-Rails4WithEngines = BrakemanTester.run_scan "rails4_with_engines", "Rails4WithEngines"
-
 class Rails4WithEnginesTests < Test::Unit::TestCase
   include BrakemanTester::FindWarning
   include BrakemanTester::CheckExpected
 
   def expected
     @expected ||= {
-      :controller => 0,
+      :controller => 1,
       :model => 5,
-      :template => 9,
-      :generic => 2 }
+      :template => 11,
+      :generic => 10 }
   end
 
   def report
-    Rails4WithEngines
+   @@report ||= BrakemanTester.run_scan "rails4_with_engines", "Rails4WithEngines"
+  end
+
+  def test_i18n_xss_CVE_2013_4491
+    assert_warning :type => :warning,
+      :warning_code => 63,
+      :fingerprint => "f127f5b2c0fc6f49570a6a3ec2b79baa2d8c24df59f86926f7a83855af06f534",
+      :warning_type => "Cross Site Scripting",
+      :message => /^Rails\ 4\.0\.0\ has\ an\ XSS\ vulnerability\ in\ /,
+      :file => /gems.rb/,
+      :confidence => 1,
+      :relative_path => "gems.rb"
+  end
+
+  def test_number_to_currency_CVE_2014_0081
+    assert_warning :type => :warning,
+      :warning_code => 73,
+      :fingerprint => "d884628b046c0ac6267bffe01bf0017a29dd94065e10e564d337cd85e40550a1",
+      :warning_type => "Cross Site Scripting",
+      :line => 4,
+      :message => /^Rails\ 4\.0\.0\ has\ a\ vulnerability\ in\ numbe/,
+      :confidence => 1,
+      :relative_path => "gems.rb",
+      :user_input => nil
+  end
+
+  def test_xss_simple_format_CVE_2013_6416
+    assert_warning :type => :template,
+      :warning_code => 68,
+      :fingerprint => "e5b270bcb5bf77069b7e4adf0c46221d1277f0b126c795e43b700a6b0f4747ae",
+      :warning_type => "Cross Site Scripting",
+      :line => 20,
+      :message => /^Values\ passed\ to\ simple_format\ are\ not\ s/,
+      :confidence => 0,
+      :relative_path => "engines/user_removal/app/views/users/show.html.erb",
+      :user_input => s(:call, s(:call, s(:const, :User), :find, s(:call, s(:params), :[], s(:lit, :id))), :likes)
+
+    assert_warning :type => :template,
+      :warning_code => 68,
+      :fingerprint => "e31d9365f0e99e55bb3d62deda2bf1ee0bc4e5970dd5791fcde8056f6558f51f",
+      :warning_type => "Cross Site Scripting",
+      :line => 21,
+      :message => /^Values\ passed\ to\ simple_format\ are\ not\ s/,
+      :confidence => 0,
+      :relative_path => "engines/user_removal/app/views/users/show.html.erb",
+      :user_input => s(:call, s(:params), :[], s(:lit, :color))
+  end
+
+  def test_sql_injection_CVE_2013_6417
+    assert_warning :type => :warning,
+      :warning_code => 69,
+      :fingerprint => "6526cbe210b51803986cddbfd567059c8036390eb697d64baa604b62940a3c55",
+      :warning_type => "SQL Injection",
+      :message => /^Rails\ 4\.0\.0\ contains\ a\ SQL\ injection\ vul/,
+      :confidence => 0,
+      :relative_path => 'gems.rb',
+      :line => 4,
+      :file => /gems.rb/,
+      :user_input => nil
+  end
+
+  def test_remote_code_execution_CVE_2014_0130
+    assert_warning :type => :warning,
+      :warning_code => 77,
+      :fingerprint => "e833fd152ab95bf7481aada185323d97cd04c3e2322b90f3698632f4c4c04441",
+      :warning_type => "Remote Code Execution",
+      :line => nil,
+      :message => /^Rails\ 4\.0\.0\ with\ globbing\ routes\ is\ vuln/,
+      :confidence => 1,
+      :relative_path => "config/routes.rb",
+      :user_input => nil
+  end
+
+  def test_mass_assignment_CVE_2014_3514
+    assert_warning :type => :warning,
+      :warning_code => 80,
+      :fingerprint => "98c76e0940c4e2ebb0dafd2b022c6818e7f620f196ce7e5c612af7d6ac06cd39",
+      :warning_type => "Mass Assignment",
+      :line => 4,
+      :message => /^create_with\ is\ vulnerable\ to\ strong\ para/,
+      :confidence => 1,
+      :relative_path => "gems.rb",
+      :user_input => nil
   end
 
   def test_redirect_1
@@ -142,10 +222,10 @@ class Rails4WithEnginesTests < Test::Unit::TestCase
   def test_mass_assignment_12
     assert_warning :type => :model,
       :warning_code => 60,
-      :fingerprint => "18df17e4364b62c4ba1c6e2849f8302592c68d196ab43f753639f9043c1e4014",
+      :fingerprint => "dbb51200329e5eadf073c7145497d0b18e33d903248426b6e8b97ec5d03ec23a",
       :warning_type => "Mass Assignment",
       #noline,
-      :message => /^Potentially\ dangerous\ attribute\ 'plan_id/,
+      :message => "Potentially dangerous attribute available for mass assignment: :plan_id",
       :confidence => 2,
       :relative_path => "engines/user_removal/app/models/account.rb"
   end
@@ -153,10 +233,10 @@ class Rails4WithEnginesTests < Test::Unit::TestCase
   def test_mass_assignment_13
     assert_warning :type => :model,
       :warning_code => 60,
-      :fingerprint => "e2fb5b0d650caf257ef86e32b101f9488738388e91039cc130c365a8df9b83fb",
+      :fingerprint => "c505002e3567c74c8197586751d0cf9ab245aee0068f05c93589959b14dc40c8",
       :warning_type => "Mass Assignment",
       #noline,
-      :message => /^Potentially\ dangerous\ attribute\ 'banned'/,
+      :message => "Potentially dangerous attribute available for mass assignment: :banned",
       :confidence => 1,
       :relative_path => "engines/user_removal/app/models/account.rb"
   end
@@ -164,10 +244,10 @@ class Rails4WithEnginesTests < Test::Unit::TestCase
   def test_mass_assignment_14
     assert_warning :type => :model,
       :warning_code => 60,
-      :fingerprint => "6276c85369c13ed06f18ca1dd9a7ef076077154e98f0c29b7938b5649a7d115d",
+      :fingerprint => "962a14c66f5f83ece9a22700939111a0b71ed2c925980416f1b664a601e87070",
       :warning_type => "Mass Assignment",
       #noline,
-      :message => /^Potentially\ dangerous\ attribute\ 'account/,
+      :message => "Potentially dangerous attribute available for mass assignment: :account_id",
       :confidence => 0,
       :relative_path => "engines/user_removal/app/models/user.rb"
   end
@@ -175,10 +255,10 @@ class Rails4WithEnginesTests < Test::Unit::TestCase
   def test_mass_assignment_15
     assert_warning :type => :model,
       :warning_code => 60,
-      :fingerprint => "6276c85369c13ed06f18ca1dd9a7ef076077154e98f0c29b7938b5649a7d115d",
+      :fingerprint => "fa154c3e50c02c70f4351dd6731085657dfb0b9ed73ee223ad5444b31bc1d31f",
       :warning_type => "Mass Assignment",
       #noline,
-      :message => /^Potentially\ dangerous\ attribute\ 'admin'\ /,
+      :message => "Potentially dangerous attribute available for mass assignment: :admin",
       :confidence => 0,
       :relative_path => "engines/user_removal/app/models/user.rb"
   end
@@ -186,12 +266,57 @@ class Rails4WithEnginesTests < Test::Unit::TestCase
   def test_mass_assignment_16
     assert_warning :type => :model,
       :warning_code => 60,
-      :fingerprint => "6fd655a6dcf618e378d5f7e7b3a9c038ed9b29d66ab89f9c28343265b2ff6d75",
+      :fingerprint => "98c24601f549d41e0d0367e8bcefc6083263fa175a2978ace0340c6446e57603",
       :warning_type => "Mass Assignment",
       #noline,
-      :message => /^Potentially\ dangerous\ attribute\ 'status_/,
+      :message => "Potentially dangerous attribute available for mass assignment: :status_id",
       :confidence => 2,
       :relative_path => "engines/user_removal/app/models/user.rb"
   end
 
+  def test_csrf_without_exception
+    assert_warning :type => :controller,
+      :warning_code => 86,
+      :fingerprint => "4d109bd02e4ccb3ea4c51485c947be435ee006a61af7d2cd37d1b358c7469189",
+      :warning_type => "Cross-Site Request Forgery",
+      :message => "protect_from_forgery should be configured with 'with: :exception'",
+      :confidence => 1,
+      :relative_path => "app/controllers/application_controller.rb"
+  end
+
+  def test_xml_dos_CVE_2015_3227
+    assert_warning :type => :warning,
+      :warning_code => 88,
+      :fingerprint => "ea8edcadc48c04a69e0bee3bdb214ce61f7837b46e9c254b61993660653d1ec6",
+      :warning_type => "Denial of Service",
+      :line => 4,
+      :message => /^Rails\ 4\.0\.0\ is\ vulnerable\ to\ denial\ of\ s/,
+      :confidence => 1,
+      :relative_path => "gems.rb",
+      :user_input => nil
+  end
+
+  def test_denial_of_service_CVE_2016_0751
+    assert_warning :type => :warning,
+      :warning_code => 94,
+      :fingerprint => "13138593b5d3af97b9b674220c811229870f418c36717cb3c3df69928264bc95",
+      :warning_type => "Denial of Service",
+      :line => 4,
+      :message => /^Rails\ 4\.0\.0\ is\ vulnerable\ to\ denial\ of\ s/,
+      :confidence => 1,
+      :relative_path => "gems.rb",
+      :user_input => nil
+  end
+
+  def test_nested_attributes_bypass_workaround_CVE_2015_7577
+    assert_no_warning :type => :model,
+      :warning_code => 95,
+      :fingerprint => "2b1b6ac6e2348889ac0e1a7fdf0861dba7af91d794c454f8b4b07e7655a19610",
+      :warning_type => "Nested Attributes",
+      :line => 4,
+      :message => /^Rails\ 4\.0\.0\ does\ not\ call\ :reject_if\ opt/,
+      :confidence => 1,
+      :relative_path => "engines/user_removal/app/models/user.rb",
+      :user_input => nil
+  end
 end

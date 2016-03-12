@@ -9,7 +9,7 @@ class Brakeman::AliasProcessor < Brakeman::SexpProcessor
   include Brakeman::ProcessorHelper
   include Brakeman::Util
 
-  attr_reader :result
+  attr_reader :result, :tracker
 
   #Returns a new AliasProcessor with an empty environment.
   #
@@ -27,6 +27,7 @@ class Brakeman::AliasProcessor < Brakeman::SexpProcessor
     @helper_method_cache = {}
     @helper_method_info = Hash.new({})
     @or_depth_limit = (tracker && tracker.options[:branch_limit]) || 5 #arbitrary default
+    @meth_env = nil
     set_env_defaults
   end
 
@@ -58,25 +59,35 @@ class Brakeman::AliasProcessor < Brakeman::SexpProcessor
           e
         end
       end
-    rescue Exception => err
+    rescue => err
       @tracker.error err if @tracker
     end
 
-    #Generic replace
-    if replacement = env[exp] and not duplicate? replacement
-      result = replacement.deep_clone(exp.line)
-    else
-      result = exp
-    end
+    result = replace(exp)
 
     @exp_context.pop
 
     result
   end
 
+  def replace exp, int = 0
+    return exp if int > 3
+
+    if replacement = env[exp] and not duplicate? replacement
+      replace(replacement.deep_clone(exp.line), int + 1)
+    else
+      exp
+    end
+  end
+
+  ARRAY_CONST = s(:const, :Array)
+  HASH_CONST = s(:const, :Hash)
+
   #Process a method call.
   def process_call exp
+    return exp if process_call_defn? exp
     target_var = exp.target
+    target_var &&= target_var.deep_clone
     exp = process_default exp
 
     #In case it is replaced with something else
@@ -88,9 +99,17 @@ class Brakeman::AliasProcessor < Brakeman::SexpProcessor
     method = exp.method
     first_arg = exp.first_arg
 
+    if method == :send or method == :try
+      collapse_send_call exp, first_arg
+    end
+
     if node_type? target, :or and [:+, :-, :*, :/].include? method
       res = process_or_simple_operation(exp)
       return res if res
+    elsif target == ARRAY_CONST and method == :new
+      return Sexp.new(:array, *exp.args)
+    elsif target == HASH_CONST and method == :new and first_arg.nil? and !node_type?(@exp_context.last, :iter)
+      return Sexp.new(:hash)
     end
 
     #See if it is possible to simplify some basic cases
@@ -130,7 +149,16 @@ class Brakeman::AliasProcessor < Brakeman::SexpProcessor
       end
     when :/
       if number? target and number? first_arg
-        exp = Sexp.new(:lit, target.value / first_arg.value)
+        if first_arg.value == 0 and not target.value.is_a? Float
+          if @tracker
+            location = [@current_class, @current_method, "line #{first_arg.line}"].compact.join(' ')
+            require 'brakeman/processors/output_processor'
+            code = Brakeman::OutputProcessor.new.format(exp)
+            @tracker.error Exception.new("Potential divide by zero: #{code} (#{location})")
+          end
+        else
+          exp = Sexp.new(:lit, target.value / first_arg.value)
+        end
       end
     when :[]
       if array? target
@@ -155,28 +183,49 @@ class Brakeman::AliasProcessor < Brakeman::SexpProcessor
         target.value << first_arg.value
         env[target_var] = target
         return target
+      elsif string? target and string_interp? first_arg
+        exp = Sexp.new(:dstr, target.value + first_arg[1]).concat(first_arg[2..-1])
+        env[target_var] = exp
+      elsif string? first_arg and string_interp? target
+        if string? target.last
+          target.last.value << first_arg.value
+        elsif target.last.is_a? String
+          target.last << first_arg.value
+        else
+          target << first_arg
+        end
+        env[target_var] = target
+        return first_arg
       elsif array? target
         target << first_arg
         env[target_var] = target
         return target
       else
-        target = find_push_target exp
-        env[target] = exp unless target.nil? #Happens in TemplateAliasProcessor
+        target = find_push_target(target_var)
+        env[target] = exp unless target.nil? # Happens in TemplateAliasProcessor
       end
     end
 
     exp
   end
 
-  def process_call_with_block exp
+  def process_iter exp
+    @exp_context.push exp
     exp[1] = process exp.block_call
+    if array_detect_all_literals? exp[1]
+      return exp.block_call.target[1]
+    end
+
+    @exp_context.pop
 
     env.scope do
       exp.block_args.each do |e|
         #Force block arg(s) to be local
         if node_type? e, :lasgn
-          env.current[Sexp.new(:lvar, e.lhs)] = e.rhs
-        elsif node_type? e, :masgn
+          env.current[Sexp.new(:lvar, e.lhs)] = Sexp.new(:lvar, e.lhs)
+        elsif node_type? e, :kwarg
+          env.current[Sexp.new(:lvar, e[1])] = e[2]
+        elsif node_type? e, :masgn, :shadow
           e[1..-1].each do |var|
             local = Sexp.new(:lvar, var)
             env.current[local] = local
@@ -201,8 +250,6 @@ class Brakeman::AliasProcessor < Brakeman::SexpProcessor
     exp
   end
 
-  alias process_iter process_call_with_block
-
   #Process a new scope.
   def process_scope exp
     env.scope do
@@ -219,16 +266,27 @@ class Brakeman::AliasProcessor < Brakeman::SexpProcessor
   end
 
   #Process a method definition.
-  def process_methdef exp
-    env.scope do
-      set_env_defaults
+  def process_defn exp
+    meth_env do
       exp.body = process_all! exp.body
     end
     exp
+  end
+
+  def meth_env
+    begin
+      env.scope do
+        set_env_defaults
+        @meth_env = env.current
+        yield
+      end
+    ensure
+      @meth_env = nil
+    end
   end
 
   #Process a method definition on self.
-  def process_selfdef exp
+  def process_defs exp
     env.scope do
       set_env_defaults
       exp.body = process_all! exp.body
@@ -236,18 +294,30 @@ class Brakeman::AliasProcessor < Brakeman::SexpProcessor
     exp
   end
 
-  alias process_defn process_methdef
-  alias process_defs process_selfdef
+  # Handles x = y = z = 1
+  def get_rhs exp
+    if node_type? exp, :lasgn, :iasgn, :gasgn, :attrasgn, :safe_attrasgn, :cvdecl, :cdecl
+      get_rhs(exp.rhs)
+    else
+      exp
+    end
+  end
 
   #Local assignment
   # x = 1
   def process_lasgn exp
+    self_assign = self_assign?(exp.lhs, exp.rhs)
     exp.rhs = process exp.rhs if sexp? exp.rhs
     return exp if exp.rhs.nil?
 
     local = Sexp.new(:lvar, exp.lhs).line(exp.line || -2)
 
-    set_value local, exp.rhs
+    if self_assign
+      # Skip branching
+      env[local] = get_rhs(exp)
+    else
+      set_value local, get_rhs(exp)
+    end
 
     exp
   end
@@ -255,10 +325,19 @@ class Brakeman::AliasProcessor < Brakeman::SexpProcessor
   #Instance variable assignment
   # @x = 1
   def process_iasgn exp
+    self_assign = self_assign?(exp.lhs, exp.rhs)
     exp.rhs = process exp.rhs
     ivar = Sexp.new(:ivar, exp.lhs).line(exp.line)
 
-    set_value ivar, exp.rhs
+    if self_assign
+      if env[ivar].nil? and @meth_env
+        @meth_env[ivar] = get_rhs(exp)
+      else
+        env[ivar] = get_rhs(exp)
+      end
+    else
+      set_value ivar, get_rhs(exp)
+    end
 
     exp
   end
@@ -267,7 +346,8 @@ class Brakeman::AliasProcessor < Brakeman::SexpProcessor
   # $x = 1
   def process_gasgn exp
     match = Sexp.new(:gvar, exp.lhs)
-    value = exp.rhs = process(exp.rhs)
+    exp.rhs = process(exp.rhs)
+    value = get_rhs(exp)
     value.line = exp.line
 
     set_value match, value
@@ -279,7 +359,8 @@ class Brakeman::AliasProcessor < Brakeman::SexpProcessor
   # @@x = 1
   def process_cvdecl exp
     match = Sexp.new(:cvar, exp.lhs)
-    value = exp.rhs = process(exp.rhs)
+    exp.rhs = process(exp.rhs)
+    value = get_rhs(exp)
 
     set_value match, value
 
@@ -308,7 +389,8 @@ class Brakeman::AliasProcessor < Brakeman::SexpProcessor
         env[tar_variable] = hash_insert target.deep_clone, index, value
       end
     elsif method.to_s[-1,1] == "="
-      value = exp.first_arg = process(index_arg)
+      exp.first_arg = process(index_arg)
+      value = get_rhs(exp)
       #This is what we'll replace with the value
       match = Sexp.new(:call, target, method.to_s[0..-2].to_sym)
 
@@ -316,6 +398,33 @@ class Brakeman::AliasProcessor < Brakeman::SexpProcessor
     else
       raise "Unrecognized assignment: #{exp}"
     end
+    exp
+  end
+
+  # Multiple/parallel assignment:
+  #
+  # x, y = z, w
+  def process_masgn exp
+    unless array? exp[1] and array? exp[2] and exp[1].length == exp[2].length
+      return process_default(exp)
+    end
+
+    vars = exp[1].dup
+    vals = exp[2].dup
+
+    vars.shift
+    vals.shift
+
+    # Call each assignment as if it is normal
+    vars.each_with_index do |var, i|
+      val = vals[i]
+      if val
+        assign = var.dup
+        assign.rhs = val
+        process assign
+      end
+    end
+
     exp
   end
 
@@ -401,9 +510,31 @@ class Brakeman::AliasProcessor < Brakeman::SexpProcessor
       match = exp.lhs
     end
 
-    env[match] = exp.rhs
+    env[match] = get_rhs(exp)
 
     exp
+  end
+
+  # Check if exp is a call to Array#include? on an array literal
+  # that contains all literal values. For example:
+  #
+  #    [1, 2, "a"].include? x
+  #
+  def array_include_all_literals? exp
+    call? exp and
+    exp.method == :include? and
+    node_type? exp.target, :array and
+    exp.target.length > 1 and
+    exp.target.all? { |e| e.is_a? Symbol or node_type? e, :lit, :str }
+  end
+
+  def array_detect_all_literals? exp
+    call? exp and
+    [:detect, :find].include? exp.method and
+    node_type? exp.target, :array and
+    exp.target.length > 1 and
+    exp.first_arg.nil? and
+    exp.target.all? { |e| e.is_a? Symbol or node_type? e, :lit, :str }
   end
 
   #Sets @inside_if = true
@@ -437,9 +568,21 @@ class Brakeman::AliasProcessor < Brakeman::SexpProcessor
       branch_scopes = []
       exps.each_with_index do |branch, i|
         scope do
+          @branch_env = env.current
           branch_index = 2 + i # s(:if, condition, then_branch, else_branch)
-          exp[branch_index] = process_if_branch branch
+          if i == 0 and array_include_all_literals? condition
+            # If the condition is ["a", "b"].include? x
+            # set x to "a" inside the true branch
+            var = condition.first_arg
+            previous_value = env.current[var]
+            env.current[var] = condition.target[1]
+            exp[branch_index] = process_if_branch branch
+            env.current[var] = previous_value
+          else
+            exp[branch_index] = process_if_branch branch
+          end
           branch_scopes << env.current
+          @branch_env = nil
         end
       end
 
@@ -527,6 +670,22 @@ class Brakeman::AliasProcessor < Brakeman::SexpProcessor
       string1
     else
       result
+    end
+  end
+
+  # Change x.send(:y, 1) to x.y(1)
+  def collapse_send_call exp, first_arg
+    # Handle try(&:id)
+    if node_type? first_arg, :block_pass
+      first_arg = first_arg[1]
+    end
+
+    return unless symbol? first_arg or string? first_arg
+    exp.method = first_arg.value.to_sym
+    args = exp.args
+    exp.pop # remove last arg
+    if args.length > 1
+      exp.arglist = args[1..-1]
     end
   end
 
@@ -699,6 +858,40 @@ class Brakeman::AliasProcessor < Brakeman::SexpProcessor
     end
   end
 
+  def self_assign? var, value
+    self_assign_var?(var, value) or self_assign_target?(var, value)
+  end
+
+  #Return true if for x += blah or @x += blah
+  def self_assign_var? var, value
+    call? value and
+    value.method == :+ and
+    node_type? value.target, :lvar, :ivar and
+    value.target.value == var
+  end
+
+  #Return true for x = x.blah
+  def self_assign_target? var, value
+    target = top_target(value)
+
+    if node_type? target, :lvar, :ivar
+      target = target.value
+    end
+
+    var == target
+  end
+
+  #Returns last non-nil target in a call chain
+  def top_target exp, last = nil
+    if call? exp
+      top_target exp.target, exp
+    elsif node_type? exp, :iter
+      top_target exp.block_call, last
+    else
+      exp || last
+    end
+  end
+
   def value_from_if exp
     if block? exp.else_clause or block? exp.then_clause
       #If either clause is more than a single expression, just use entire
@@ -731,7 +924,17 @@ class Brakeman::AliasProcessor < Brakeman::SexpProcessor
     end
 
     if @ignore_ifs or not @inside_if
-      env[var] = value
+      if @meth_env and node_type? var, :ivar and env[var].nil?
+        @meth_env[var] = value
+      else
+        env[var] = value
+      end
+    elsif env.current[var]
+      env.current[var] = value
+    elsif @branch_env and @branch_env[var]
+      @branch_env[var] = value
+    elsif @branch_env and @meth_env and node_type? var, :ivar
+      @branch_env[var] = value
     else
       env.current[var] = value
     end
@@ -776,5 +979,4 @@ class Brakeman::AliasProcessor < Brakeman::SexpProcessor
       false
     end
   end
-
 end

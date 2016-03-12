@@ -1,5 +1,6 @@
 require 'brakeman/processors/alias_processor'
 require 'brakeman/processors/lib/render_helper'
+require 'brakeman/processors/lib/render_path'
 require 'brakeman/processors/lib/find_return_value'
 
 #Processes aliasing in controllers, but includes following
@@ -19,12 +20,13 @@ class Brakeman::ControllerAliasProcessor < Brakeman::AliasProcessor
     @method_cache = {} #Cache method lookups
   end
 
-  def process_controller name, src
+  def process_controller name, src, file
     if not node_type? src, :class
       Brakeman.debug "#{name} is not a class, it's a #{src.node_type}"
       return
     else
       @current_class = name
+      @file = file
 
       process_default src
 
@@ -36,27 +38,28 @@ class Brakeman::ControllerAliasProcessor < Brakeman::AliasProcessor
   def process_mixins
     controller = @tracker.controllers[@current_class]
 
-    controller[:includes].each do |i|
+    controller.includes.each do |i|
       mixin = @tracker.libs[i]
 
       next unless mixin
 
       #Process methods in alphabetical order for consistency
-      methods = mixin[:public].keys.map { |n| n.to_s }.sort.map { |n| n.to_sym }
+      methods = mixin.methods_public.keys.map { |n| n.to_s }.sort.map { |n| n.to_sym }
 
       methods.each do |name|
         #Need to process the method like it was in a controller in order
         #to get the renders set
         processor = Brakeman::ControllerProcessor.new(@app_tree, @tracker)
-        method = mixin[:public][name].deep_clone
+        method = mixin.get_method(name)[:src].deep_clone
 
-        if node_type? method, :methdef
+        if node_type? method, :defn
           method = processor.process_defn method
         else
-          #Should be a methdef, but this will catch other cases
+          #Should be a defn, but this will catch other cases
           method = processor.process method
         end
 
+        @file = mixin.file
         #Then process it like any other method in the controller
         process method
       end
@@ -70,7 +73,7 @@ class Brakeman::ControllerAliasProcessor < Brakeman::AliasProcessor
 
   #Processes a method definition, which may include
   #processing any rendered templates.
-  def process_methdef exp
+  def process_defn exp
     meth_name = exp.method_name
 
     Brakeman.debug "Processing #{@current_class}##{meth_name}"
@@ -84,9 +87,7 @@ class Brakeman::ControllerAliasProcessor < Brakeman::AliasProcessor
     @current_method = meth_name
     @rendered = false if is_route
 
-    env.scope do
-      set_env_defaults
-
+    meth_env do
       if is_route
         before_filter_list(@current_method, @current_class).each do |f|
           process_before_filter f
@@ -123,8 +124,8 @@ class Brakeman::ControllerAliasProcessor < Brakeman::AliasProcessor
   end
 
   #Check for +respond_to+
-  def process_call_with_block exp
-    process_default exp
+  def process_iter exp
+    super
 
     if call? exp.block_call and exp.block_call.method == :respond_to
       @rendered = true
@@ -167,12 +168,22 @@ class Brakeman::ControllerAliasProcessor < Brakeman::AliasProcessor
   #Processes the default template for the current action
   def process_default_render exp
     process_layout
-    process_template template_name, nil
+    process_template template_name, nil, nil, nil
   end
 
   #Process template and add the current class and method name as called_from info
-  def process_template name, args
-    super name, args, ["#@current_class##@current_method"]
+  def process_template name, args, _, line
+    # If line is null, assume implicit render and set the end of the action
+    # method as the line number
+    if line.nil? and controller = @tracker.controllers[@current_class]
+      if meth = controller.get_method(@current_method)
+        line = meth[:src] && meth[:src].last && meth[:src].last.line
+        line += 1
+      end
+    end
+
+    render_path = Brakeman::RenderPath.new.add_controller_render(@current_class, @current_method, line, relative_path(@file))
+    super name, args, render_path, line
   end
 
   #Turns a method name into a template name
@@ -192,12 +203,12 @@ class Brakeman::ControllerAliasProcessor < Brakeman::AliasProcessor
   def layout_name
     controller = @tracker.controllers[@current_class]
 
-    return controller[:layout] if controller[:layout]
-    return false if controller[:layout] == false
+    return controller.layout if controller.layout
+    return false if controller.layout == false
 
     app_controller = @tracker.controllers[:ApplicationController]
 
-    return app_controller[:layout] if app_controller and app_controller[:layout]
+    return app_controller.layout if app_controller and app_controller.layout
 
     nil
   end
@@ -208,89 +219,19 @@ class Brakeman::ControllerAliasProcessor < Brakeman::AliasProcessor
       true
     else
       routes = @tracker.routes[@current_class]
-      routes and (routes == :allow_all_actions or routes.include? method)
+      routes and (routes.include? :allow_all_actions or routes.include? method)
     end
   end
 
   #Get list of filters, including those that are inherited
   def before_filter_list method, klass
     controller = @tracker.controllers[klass]
-    filters = []
 
-    while controller
-      filters = get_before_filters(method, controller) + filters
-
-      controller = @tracker.controllers[controller[:parent]] ||
-                   @tracker.libs[controller[:parent]]
-    end
-
-    filters
-  end
-
-  #Returns an array of filter names
-  def get_before_filters method, controller
-    return [] unless controller[:options] and controller[:options][:before_filters]
-
-    filters = []
-
-    if controller[:before_filter_cache].nil?
-      filter_cache = []
-
-      controller[:options][:before_filters].each do |filter|
-        filter_cache << before_filter_to_hash(filter)
-      end
-
-      controller[:before_filter_cache] = filter_cache
-    end
-
-    controller[:before_filter_cache].each do |f|
-      if f[:all] or
-        (f[:only] == method) or
-        (f[:only].is_a? Array and f[:only].include? method) or
-        (f[:except].is_a? Symbol and f[:except] != method) or
-        (f[:except].is_a? Array and not f[:except].include? method)
-
-        filters.concat f[:methods]
-      end
-    end
-
-    filters
-  end
-
-  #Returns a before filter as a hash table
-  def before_filter_to_hash args
-    filter = {}
-
-    #Process args for the uncommon but possible situation
-    #in which some variables are used in the filter.
-    args.each do |a|
-      if sexp? a
-        a = process_default a
-      end
-    end
-
-    filter[:methods] = [args[0][1]]
-
-    args[1..-1].each do |a|
-      filter[:methods] << a[1] if a.node_type == :lit
-    end
-
-    if args[-1].node_type == :hash
-      option = args[-1][1][1]
-      value = args[-1][2]
-      case value.node_type
-      when :array
-        filter[option] = value[1..-1].map {|v| v[1] }
-      when :lit, :str
-        filter[option] = value[1]
-      else
-        Brakeman.debug "[Notice] Unknown before_filter value: #{option} => #{value}"
-      end
+    if controller
+      controller.before_filter_list self, method
     else
-      filter[:all] = true
+      []
     end
-
-    filter
   end
 
   #Finds a method in the given class or a parent class
@@ -310,22 +251,20 @@ class Brakeman::ControllerAliasProcessor < Brakeman::AliasProcessor
     controller ||= @tracker.libs[klass]
 
     if klass and controller
-      method = controller[:public][method_name]
-      method ||= controller[:private][method_name]
-      method ||= controller[:protected][method_name]
+      method = controller.get_method method_name
 
       if method.nil?
-        controller[:includes].each do |included|
+        controller.includes.each do |included|
           method = find_method method_name, included
           if method
             @method_cache[method_name] = method
             return method
           end
-        end
+       end
 
-        @method_cache[method_name] = find_method method_name, controller[:parent]
+        @method_cache[method_name] = find_method method_name, controller.parent
       else
-        @method_cache[method_name] = { :controller => controller[:name], :method => method }
+        @method_cache[method_name] = { :controller => controller.name, :method => method[:src] }
       end
     else
       nil

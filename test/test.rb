@@ -5,14 +5,16 @@ $LOAD_PATH.unshift "#{TEST_PATH}/../lib"
 begin
   require 'simplecov'
 
-  SimpleCov.start do
-    add_filter 'lib/ruby_parser/ruby18_parser.rb'
-    add_filter 'lib/ruby_parser/ruby19_parser.rb'
-    add_filter 'lib/ruby_parser/ruby_lexer.rb'
-    add_filter 'lib/ruby_parser/ruby_parser_extras.rb'
-  end
+  SimpleCov.start
 rescue LoadError => e
   $stderr.puts "Install simplecov for test coverage report"
+end
+
+begin
+  require "codeclimate-test-reporter"
+  CodeClimate::TestReporter.start
+rescue LoadError => e
+  $stderr.puts "Skipping Code Climate test reporting"
 end
 
 require 'brakeman'
@@ -25,19 +27,9 @@ module BrakemanTester
     #Run scan on app at the given path
     def run_scan path, name = nil, opts = {}
       opts.merge! :app_path => "#{TEST_PATH}/apps/#{path}",
-        :quiet => false,
         :url_safe_methods => [:ensure_valid_proto!]
 
-      announce "Processing #{name} application..."
-
       Brakeman.run(opts).report.to_hash
-    end
-
-    #Make an announcement
-    def announce msg
-      $stderr.puts "-" * 40
-      $stderr.puts msg
-      $stderr.puts "-" * 40
     end
   end
 end
@@ -52,7 +44,7 @@ module BrakemanTester::FindWarning
 
   def assert_no_warning opts
     warnings = find opts
-    assert_equal 0, warnings.length, "Unexpected warning found"
+    assert_equal 0, warnings.length
   end
 
   def find opts = {}, &block
@@ -95,7 +87,7 @@ module BrakemanTester::CheckExpected
   end
 
   def test_zero_errors
-    assert_equal 0, report[:errors].length
+    assert_equal 0, report[:errors].length, "Unexpected warning found: #{report[:errors].inspect}"
   end
 end
 
@@ -179,6 +171,16 @@ module BrakemanTester::RescanTestHelper
     assert_equal false, File.exist?(path)
   end
 
+  def rename from_file, to_file
+    require 'fileutils'
+    old_path = full_path from_file
+    new_path = full_path to_file
+
+    assert File.exist?(old_path), "Could not find #{old_path} to delete"
+
+    FileUtils.mv old_path, new_path
+  end
+
   def append file, code
     File.open full_path(file), "a" do |f|
       f.puts code
@@ -207,7 +209,10 @@ module BrakemanTester::RescanTestHelper
   end
 
   def write_file file, content
-    File.open full_path(file), "w+" do |f|
+    require 'fileutils'
+    path = full_path(file)
+    FileUtils.mkdir_p(File.dirname(path))
+    File.open path, "w" do |f|
       f.puts content
     end
   end

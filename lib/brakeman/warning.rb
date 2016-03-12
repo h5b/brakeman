@@ -1,25 +1,43 @@
-require 'multi_json'
+require 'json'
 require 'digest/sha2'
 require 'brakeman/warning_codes'
 
 #The Warning class stores information about warnings
 class Brakeman::Warning
   attr_reader :called_from, :check, :class, :confidence, :controller,
-    :line, :method, :model, :template, :user_input, :warning_code, :warning_set,
-    :warning_type
+    :line, :method, :model, :template, :user_input, :user_input_type,
+    :warning_code, :warning_set, :warning_type
 
   attr_accessor :code, :context, :file, :message, :relative_path
 
   TEXT_CONFIDENCE = [ "High", "Medium", "Weak" ]
 
+  OPTIONS = {:called_from => :@called_from,
+              :check => :@check,
+              :class => :@class,
+              :code => :@code,
+              :confidence => :@confidence,
+              :controller => :@controller,
+              :file => :@file,
+              :gem_info => :@gem_info,
+              :line => :@line,
+              :link_path => :@link_path,
+              :message => :@message,
+              :method => :@method,
+              :model => :@model,
+              :relative_path => :@relative_path,
+              :template => :@template,
+              :user_input => :@user_input,
+              :warning_set => :@warning_set,
+              :warning_type => :@warning_type
+            }
+
   #+options[:result]+ can be a result from Tracker#find_call. Otherwise, it can be +nil+.
   def initialize options = {}
     @view_name = nil
 
-    [:called_from, :check, :class, :code, :confidence, :controller, :file, :line, :link_path,
-      :message, :method, :model, :relative_path, :template, :user_input, :warning_set, :warning_type].each do |option|
-
-      self.instance_variable_set("@#{option}", options[option])
+    OPTIONS.each do |key, var|
+      self.instance_variable_set(var, options[key])
     end
 
     result = options[:result]
@@ -35,6 +53,17 @@ class Brakeman::Warning
       end
     end
 
+    if @method.to_s =~ /^fake_filter\d+/
+      @method = :before_filter
+    end
+
+    if @user_input.is_a? Brakeman::BaseCheck::Match
+      @user_input_type = @user_input.type
+      @user_input = @user_input.match
+    elsif @user_input == false
+      @user_input = nil
+    end
+
     if not @line
       if @user_input and @user_input.respond_to? :line
         @line = @user_input.line
@@ -43,12 +72,22 @@ class Brakeman::Warning
       end
     end
 
+    if @gem_info
+      if @gem_info.is_a? Hash
+        @line ||= @gem_info[:line]
+        @file ||= @gem_info[:file]
+      else
+        # Fallback behavior returns just a string for the file name
+        @file ||= @gem_info
+      end
+    end
+
     unless @warning_set
       if self.model
         @warning_set = :model
       elsif self.template
         @warning_set = :template
-        @called_from = self.template[:caller]
+        @called_from = self.template.render_path
       elsif self.controller
         @warning_set = :controller
       else
@@ -75,12 +114,11 @@ class Brakeman::Warning
   end
 
   #Returns name of a view, including where it was rendered from
-  def view_name
-    return @view_name if @view_name
-    if called_from
-      @view_name = "#{template[:name]} (#{called_from.last})"
+  def view_name(include_renderer = true)
+    if called_from and include_renderer
+      @view_name = "#{template.name} (#{called_from.last})"
     else
-      @view_name = template[:name]
+      @view_name = template.name
     end
   end
 
@@ -169,10 +207,10 @@ class Brakeman::Warning
     Digest::SHA2.new(256).update("#{warning_code_string}#{code_string}#{location_string}#{@relative_path}#{self.confidence}").to_s
   end
 
-  def location
+  def location include_renderer = true
     case @warning_set
     when :template
-      location = { :type => :template, :template => self.view_name }
+      location = { :type => :template, :template => self.view_name(include_renderer) }
     when :model
       location = { :type => :model, :model => self.model }
     when :controller
@@ -196,14 +234,14 @@ class Brakeman::Warning
       :link => self.link,
       :code => (@code && self.format_code(false)),
       :render_path => self.called_from,
-      :location => self.location,
+      :location => self.location(false),
       :user_input => (@user_input && self.format_user_input(false)),
       :confidence => TEXT_CONFIDENCE[self.confidence]
     }
   end
 
   def to_json
-    MultiJson.dump self.to_hash
+    JSON.generate self.to_hash
   end
 
   private

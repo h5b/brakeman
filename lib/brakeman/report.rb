@@ -6,7 +6,7 @@ require 'brakeman/report/report_base'
 class Brakeman::Report
   attr_reader :tracker
 
-  VALID_FORMATS = [:to_html, :to_pdf, :to_csv, :to_json, :to_tabs, :to_hash, :to_s]
+  VALID_FORMATS = [:to_html, :to_pdf, :to_csv, :to_json, :to_tabs, :to_hash, :to_s, :to_markdown, :to_codeclimate]
 
   def initialize app_tree, tracker
     @app_tree = app_tree
@@ -15,6 +15,9 @@ class Brakeman::Report
 
   def format format
     reporter = case format
+    when :to_codeclimate
+      require_report 'codeclimate'
+      Brakeman::Report::CodeClimate
     when :to_csv
       require_report 'csv'
       Brakeman::Report::CSV
@@ -29,6 +32,8 @@ class Brakeman::Report
     when :to_hash
       require_report 'hash'
       Brakeman::Report::Hash
+    when :to_markdown
+      return self.to_markdown
     when :to_s
       return self.to_s
     when :to_pdf
@@ -60,6 +65,11 @@ class Brakeman::Report
   def to_s
     require_report 'table'
     generate Brakeman::Report::Table
+  end
+
+  def to_markdown
+    require_report 'markdown'
+    generate Brakeman::Report::Markdown
   end
 
   def generate reporter

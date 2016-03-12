@@ -1,12 +1,18 @@
 class AliasProcessorTests < Test::Unit::TestCase
-  def assert_alias expected, original
+  def assert_alias expected, original, full = false
     original_sexp = RubyParser.new.parse original
     expected_sexp = RubyParser.new.parse expected
-
     processed_sexp = Brakeman::AliasProcessor.new.process_safely original_sexp
-    result = processed_sexp.last
 
-    assert_equal expected_sexp, result
+    if full
+      assert_equal expected_sexp, processed_sexp
+    else
+      assert_equal expected_sexp, processed_sexp.last
+    end
+  end
+
+  def assert_output input, output
+    assert_alias output, input, true
   end
 
   def test_addition
@@ -27,6 +33,20 @@ class AliasProcessorTests < Test::Unit::TestCase
     RUBY
   end
 
+  def test_divide_by_zero
+    assert_alias '1 / 0', <<-RUBY
+    x = 1 / 0
+    x
+    RUBY
+  end
+
+  def test_infinity
+    e = RubyParser.new.parse "x = 1.0 / 0; x"
+    a = Brakeman::AliasProcessor.new.process_safely e
+
+    assert_equal Sexp.new(:lit, 1.0 / 0), a.last
+  end
+
   def test_concatentation
     assert_alias "'Hello world!'", <<-RUBY
       x = "Hello"
@@ -41,6 +61,31 @@ class AliasProcessorTests < Test::Unit::TestCase
       x = ""
       x << "hello" << " " << "world"
       x
+    RUBY
+  end
+
+  def test_string_append_call
+    assert_alias "'hello ' << params[:x]", <<-RUBY
+    x = ""
+    x << 'hello ' << params[:x]
+    x
+    RUBY
+  end
+
+  def test_string_interp_concat
+    assert_alias '"#{y}\nthing"', <<-'RUBY'
+    x = "#{y}\n"
+    x << "thing"
+    x
+    RUBY
+  end
+
+  def test_string_concat_interp
+    assert_alias '"hello\n#{world}"', <<-'RUBY'
+    x = ""
+    x << "hello"
+    x << "\n#{world}"
+    x
     RUBY
   end
 
@@ -77,9 +122,41 @@ class AliasProcessorTests < Test::Unit::TestCase
     RUBY
   end
 
+  def test_array_new_append
+    assert_alias '[1, 2, 3]', <<-RUBY
+      x = Array.new
+      x << 1 << 2 << 3
+      x
+    RUBY
+  end
+
+  def test_array_new_init_append
+    assert_alias '[1, 2, 3]', <<-RUBY
+      x = Array.new(1)
+      x << 2 << 3
+      x
+    RUBY
+  end
+
+  def test_array_detect
+    assert_alias '1', <<-RUBY
+      x = [1,2,3].detect { |x| x.odd? }
+      x
+    RUBY
+  end
+
   def test_hash_index
     assert_alias "'You say goodbye, I say :hello'", <<-RUBY
       x = {:goodbye => "goodbye cruel world" }
+      x[:hello] = "hello world"
+      x.merge! :goodbye => "You say goodbye, I say :hello"
+      x[:goodbye]
+    RUBY
+  end
+
+  def test_hash_new_index
+    assert_alias "'You say goodbye, I say :hello'", <<-RUBY
+      x = Hash.new
       x[:hello] = "hello world"
       x.merge! :goodbye => "You say goodbye, I say :hello"
       x[:goodbye]
@@ -150,8 +227,36 @@ class AliasProcessorTests < Test::Unit::TestCase
 
   def test_addition_chained
     assert_alias 'y + 5', <<-RUBY
-    x = y + 2 + 3
-    x
+      x = y + 2 + 3
+      x
+    RUBY
+  end
+
+  def test_send_collapse
+    assert_alias 'x.y(1)', <<-RUBY
+      z = x.send(:y, 1)
+      z
+    RUBY
+  end
+
+  def test_send_collapse_with_no_target
+    assert_alias 'y(1)', <<-RUBY
+      x = send(:y, 1)
+      x
+    RUBY
+  end
+
+  def test_try_collapse
+    assert_alias 'x.y', <<-RUBY
+      z = x.try(:y)
+      z
+    RUBY
+  end
+
+  def test_try_symbol_to_proc_collapse
+    assert_alias 'x.y', <<-RUBY
+      z = x.try(&:y)
+      z
     RUBY
   end
 
@@ -228,7 +333,7 @@ class AliasProcessorTests < Test::Unit::TestCase
   end
 
   def test_simple_or_operation_compaction
-    assert_alias "[0, ((1 || 2) || 3), (4 || 8)]", <<-RUBY
+    assert_alias "[0, 4, (4 || 8)]", <<-RUBY
     x = 1
 
     if z
@@ -376,5 +481,321 @@ class AliasProcessorTests < Test::Unit::TestCase
 
     y
     RUBY
+  end
+
+  def test_block_with_local
+    assert_output <<-INPUT, <<-OUTPUT
+      def a
+        if b
+          c = nil
+          ds.each do |d|
+            e = T.new
+            c = e.map
+          end
+
+          r("f" + c.name)
+        else
+          g
+        end
+      end
+    INPUT
+      def a
+        if b
+          c = nil
+          ds.each do |d|
+            e = T.new
+            c = T.new.map
+          end
+
+          r("f" + T.new.map.name)
+        else
+          g
+        end
+      end
+    OUTPUT
+  end
+
+  def test_shadowed_block_arg
+    assert_output <<-INPUT, <<-OUTPUT
+      def a
+        y = 1
+        x do |w; y, z|
+          y = 2
+        end
+        puts y
+      end
+    INPUT
+      def a
+        y = 1
+        x do |w; y, z|
+          y = 2
+        end
+        puts 1
+      end
+    OUTPUT
+  end
+
+  def test_block_in_class_scope
+    # Make sure blocks in class do not mess up instance variable scope
+    # for subsequent methods
+    assert_output <<-INPUT, <<-OUTPUT
+      class A
+        x do
+          @a = 1
+        end
+
+        def b
+          @a
+        end
+      end
+    INPUT
+      class A
+        x do
+          @a = 1
+        end
+
+        def b
+          @a
+        end
+      end
+    OUTPUT
+  end
+
+  def test_instance_method_scope_in_block
+    # Make sure instance variables set inside blocks are set at the method
+    # scope
+    assert_output <<-INPUT, <<-OUTPUT
+      class A
+        def b
+          x do
+            @a = 1
+          end
+
+          @a
+        end
+      end
+    INPUT
+      class A
+        def b
+          x do
+            @a = 1
+          end
+
+          1
+        end
+      end
+    OUTPUT
+  end
+
+  def test_instance_method_scope_in_if_with_blocks
+    # Make sure instance variables set inside if expressions are set at the
+    # method scope after being combined
+    assert_output <<-INPUT, <<-OUTPUT
+      class A
+        def b
+          if something
+            x do
+              @a = 1
+            end
+          else
+            y do
+              @a = 2
+            end
+          end
+
+          @a
+        end
+      end
+    INPUT
+      class A
+        def b
+          if something
+            x do
+              @a = 1
+            end
+          else
+            y do
+              @a = 2
+            end
+          end
+
+          (1 or 2)
+        end
+      end
+    OUTPUT
+  end
+
+  def test_branch_env_is_closed_after_if_statement
+    assert_output <<-'INPUT', <<-'OUTPUT'
+      def a
+        if b
+          return unless c # this was causing problems
+          @d = D.find(1)
+          @d
+        end
+      end
+    INPUT
+      def a
+        if b
+          return unless c
+          @d = D.find(1)
+          D.find(1)
+       end
+      end
+    OUTPUT
+  end
+
+  def test_no_branch_for_plus_equals_with_string
+    assert_alias '"abc"', <<-INPUT
+      x = "a"
+      x += "b" if something
+      x += "c" if something_else
+      x
+    INPUT
+  end
+
+  def test_no_branch_for_plus_equals_with_string_in_ivar
+    assert_alias '"abc"', <<-INPUT
+      @x = "a"
+      @x += "b" if something
+      @x += "c" if something_else
+      @x
+    INPUT
+  end
+
+  #We could do better, but this prevents some Sexp explosions and retains
+  #information about the values
+  def test_no_branch_for_plus_equals_with_interpolated_string
+    assert_alias '"a" + "#{b}" + "c"', <<-'INPUT'
+      x = "a"
+      x += "#{b}" if something
+      x += "c" if something_else
+      x
+    INPUT
+  end
+
+  #Unfortunate to go to this behavior which loses information
+  #but I can't think of a scenario in which the several integers
+  #in ORs would be handled right anyway
+  def test_no_branch_for_plus_equals_with_number
+    assert_alias '6', <<-INPUT
+      x = 1
+      x += 2 if something
+      x += 3 if something_else
+      x
+    INPUT
+  end
+
+  def test_keywords_in_blocks
+    assert_output <<-'INPUT', <<-'OUTPUT'
+    x do |y: 1, z: "2"|
+      puts y, z
+    end
+    INPUT
+    x do |y: 1, z: "2"|
+      puts 1, "2"
+    end
+    OUTPUT
+  end
+
+  def test_multiple_assignment
+    assert_output <<-INPUT, <<-OUTPUT
+    x, $y = 1, 2
+    x
+    $y
+    INPUT
+    x, $y = 1, 2
+    1
+    2
+    OUTPUT
+  end
+
+  def test_chained_assignment
+    assert_alias '1', <<-INPUT
+    x = y = 1
+    x
+    INPUT
+
+    assert_alias '1', <<-INPUT
+    @x = @y = 1
+    @x
+    INPUT
+
+    assert_alias '1', <<-INPUT
+    $x = $y = 1
+    $x
+    INPUT
+
+    assert_alias '1', <<-INPUT
+    X = Y = 1
+    X
+    INPUT
+
+    assert_alias '1', <<-INPUT
+    @@x = @@y = 1
+    @@x
+    INPUT
+
+    assert_alias '1', <<-INPUT
+    w.x = x.y = 1
+    w.x
+    INPUT
+
+    assert_alias '5', <<-INPUT
+    A = @b = @@c = $D = e.f = 1
+    z = A + @b + @@c + $D + e.f
+    z
+    INPUT
+  end
+
+  def test_branch_with_self_assign_target
+    assert_alias 'a.w.y', <<-INPUT
+    x = a
+    x = x.w if thing
+    x = x.y if other_thing
+    x
+    INPUT
+  end
+
+  def test_branch_array_include
+    assert_alias 'x', <<-INPUT
+    if [1,2,3].include? x
+      stuff
+    end
+
+    x
+    INPUT
+
+    assert_output <<-INPUT, <<-OUTPUT
+    if [1,2,3].include? x
+      y = x + 2
+      p y
+    end
+
+    x
+    INPUT
+    if [1,2,3].include? x
+      y = 3
+      p 3
+    end
+
+    x
+    OUTPUT
+
+    assert_output <<-INPUT, <<-OUTPUT
+    x = params[:x].presence
+    if ['a','b'].include? x
+      User.send x
+    end
+
+    x
+    INPUT
+    x = params[:x].presence
+    if ['a','b'].include? params[:x].presence
+      User.a
+    end
+
+    params[:x].presence
+    OUTPUT
   end
 end

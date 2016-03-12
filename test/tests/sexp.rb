@@ -76,6 +76,16 @@ class SexpTests < Test::Unit::TestCase
     assert_equal s(:lit, 2), exp.last_arg
   end
 
+  def test_method_call_set_method
+    exp = parse "x.y"
+
+    assert_equal :y, exp.method
+    
+    exp.method = :z
+
+    assert_equal :z, exp.method
+  end
+
   def test_method_call_with_block
     exp = parse "x do |z|; blah z; end"
     block = exp.block
@@ -152,11 +162,21 @@ class SexpTests < Test::Unit::TestCase
     assert_equal s(:lit, 1), exp.rhs
   end
 
-  def test_class_variable_assignment
+  def test_class_variable_declaration
     exp = parse '@@x = 1'
 
+    assert_equal :cvdecl, exp.node_type
     assert_equal :@@x, exp.lhs
     assert_equal s(:lit, 1), exp.rhs
+  end
+
+  def test_class_variable_assignment
+    exp = parse 'def x; @@a = 1; end'
+    asgn = exp.last
+
+    assert_equal :cvasgn, asgn.node_type
+    assert_equal :@@a, asgn.lhs
+    assert_equal s(:lit, 1), asgn.rhs
   end
 
   def test_method_def_name
@@ -362,5 +382,11 @@ class SexpTests < Test::Unit::TestCase
 
     assert_equal s(:or, s(:or, s(:or, s(:lit, 0), s(:lit, 0)), s(:lit, 1)), s(:lit, 2)), e
     assert_equal 3, e.or_depth
+  end
+
+  def test_inspect_recursive
+    s = Sexp.new(:s)
+    s << s
+    assert_equal "s(:s, s(...))", s.inspect
   end
 end

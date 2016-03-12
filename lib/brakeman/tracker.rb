@@ -4,6 +4,7 @@ require 'brakeman/checks'
 require 'brakeman/report'
 require 'brakeman/processors/lib/find_call'
 require 'brakeman/processors/lib/find_all_calls'
+require 'brakeman/tracker/config'
 
 #The Tracker keeps track of all the processed information.
 class Brakeman::Tracker
@@ -25,19 +26,14 @@ class Brakeman::Tracker
     @processor = processor
     @options = options
 
-    @config = { :rails => {} }
+    @config = Brakeman::Config.new(self)
     @templates = {}
     @controllers = {}
     #Initialize models with the unknown model so
     #we can match models later without knowing precisely what
     #class they are.
-    @models = { UNKNOWN_MODEL => { :name => UNKNOWN_MODEL,
-        :parent => nil,
-        :includes => [],
-        :public => {},
-        :private => {},
-        :protected => {},
-        :options => {} } }
+    @models = {}
+    @models[UNKNOWN_MODEL] = Brakeman::Model.new(UNKNOWN_MODEL, nil, nil, nil, self)
     @routes = {}
     @initializers = {}
     @errors = []
@@ -76,19 +72,28 @@ class Brakeman::Tracker
     @checks
   end
 
+  def app_path
+    @app_path ||= File.expand_path @options[:app_path]
+  end
+
   #Iterate over all methods in controllers and models.
   def each_method
-    [self.controllers, self.models].each do |set|
-      set.each do |set_name, info|
-        [:private, :public, :protected].each do |visibility|
-          info[visibility].each do |method_name, definition|
-            if definition.node_type == :selfdef
-              method_name = "#{definition[1]}.#{method_name}"
-            end
+    classes = [self.controllers, self.models]
 
-            yield definition, set_name, method_name, info[:file]
+    if @options[:index_libs]
+      classes << self.libs
+    end
 
+    classes.each do |set|
+      set.each do |set_name, collection|
+        collection.each_method do |method_name, definition|
+          src = definition[:src]
+          if src.node_type == :defs
+            method_name = "#{src[1]}.#{method_name}"
           end
+
+          yield src, set_name, method_name, definition[:file]
+
         end
       end
     end
@@ -107,6 +112,23 @@ class Brakeman::Tracker
 
     @rest.each do |k|
       yield k, templates[k]
+    end
+  end
+
+
+  def each_class
+    classes = [self.controllers, self.models]
+
+    if @options[:index_libs]
+      classes << self.libs
+    end
+
+    classes.each do |set|
+      set.each do |set_name, collection|
+        collection.src.each do |file, src|
+          yield src, set_name, file
+        end
+      end
     end
   end
 
@@ -173,8 +195,12 @@ class Brakeman::Tracker
       finder.process_source definition, :class => set_name, :method => method_name, :file => file
     end
 
+    self.each_class do |definition, set_name, file|
+      finder.process_source definition, :class => set_name, :file => file
+    end
+
     self.each_template do |name, template|
-      finder.process_source template[:src], :template => template, :file => template[:file]
+      finder.process_source template.src, :template => template, :file => template.file
     end
 
     @call_index = Brakeman::CallIndex.new finder.calls
@@ -216,22 +242,20 @@ class Brakeman::Tracker
 
     method_sets.each do |set|
       set.each do |set_name, info|
-        [:private, :public, :protected].each do |visibility|
-          info[visibility].each do |method_name, definition|
-            if definition.node_type == :selfdef
-              method_name = "#{definition[1]}.#{method_name}"
-            end
-
-            finder.process_source definition, :class => set_name, :method => method_name, :file => info[:file]
-
+        info.each_method do |method_name, definition|
+          src = definition[:src]
+          if src.node_type == :defs
+            method_name = "#{src[1]}.#{method_name}"
           end
+
+          finder.process_source src, :class => set_name, :method => method_name, :file => definition[:file]
         end
       end
     end
 
     if locations.include? :templates
       self.each_template do |name, template|
-        finder.process_source template[:src], :template => template, :file => template[:file]
+        finder.process_source template.src, :template => template, :file => template.file
       end
     end
 
@@ -244,7 +268,7 @@ class Brakeman::Tracker
   def reset_templates options = { :only_rendered => false }
     if options[:only_rendered]
       @templates.delete_if do |name, template|
-        name.to_s.include? "Controller#"
+        template.rendered_from_controller?
       end
     else
       @templates = {}
@@ -268,7 +292,7 @@ class Brakeman::Tracker
     model_name = nil
 
     @models.each do |name, model|
-      if model[:file] == path
+      if model.files.include?(path)
         model_name = name
         break
       end
@@ -277,15 +301,31 @@ class Brakeman::Tracker
     @models.delete model_name
   end
 
+  #Clear information related to model
+  def reset_lib path
+    lib_name = nil
+
+    @libs.each do |name, lib|
+      if lib.files.include?(path)
+        lib_name = name
+        break
+      end
+    end
+
+    @libs.delete lib_name
+  end
+
   def reset_controller path
+    controller_name = nil
+
     #Remove from controller
-    @controllers.delete_if do |name, controller|
-      if controller[:file] == path
-        template_matcher = /^#{name}#/
+    @controllers.each do |name, controller|
+      if controller.files.include?(path)
+        controller_name = name
 
         #Remove templates rendered from this controller
         @templates.each do |template_name, template|
-          if template[:caller] and not template[:caller].grep(template_matcher).empty?
+          if template.render_path and template.render_path.include_controller? name
             reset_template template_name
             @call_index.remove_template_indexes template_name
           end
@@ -293,10 +333,10 @@ class Brakeman::Tracker
 
         #Remove calls indexed from this controller
         @call_index.remove_indexes_by_class [name]
-
-        true
+        break
       end
     end
+    @controllers.delete controller_name
   end
 
   #Clear information about routes

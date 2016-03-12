@@ -15,7 +15,7 @@ class Brakeman::CheckLinkToHref < Brakeman::CheckLinkTo
     @ignore_methods = Set[:button_to, :check_box,
                            :field_field, :fields_for, :hidden_field,
                            :hidden_field, :hidden_field_tag, :image_tag, :label,
-                           :mail_to, :radio_button, :select,
+                           :mail_to, :polymorphic_url, :radio_button, :select,
                            :submit_tag, :text_area, :text_field,
                            :text_field_tag, :url_encode, :url_for,
                            :will_paginate].merge(tracker.options[:url_safe_methods] || [])
@@ -38,8 +38,9 @@ class Brakeman::CheckLinkToHref < Brakeman::CheckLinkTo
 
     #Ignore situations where the href is an interpolated string
     #with something before the user input
-    return if node_type?(url_arg, :string_interp) && !url_arg[1].chomp.empty?
+    return if string_interp?(url_arg) && !url_arg[1].chomp.empty?
 
+    return if call? url_arg and ignore_call? url_arg.target, url_arg.method
 
     if input = has_immediate_user_input?(url_arg)
       message = "Unsafe #{friendly_type_of input} in link_to href"
@@ -50,11 +51,11 @@ class Brakeman::CheckLinkToHref < Brakeman::CheckLinkTo
           :warning_type => "Cross Site Scripting", 
           :warning_code => :xss_link_to_href,
           :message => message,
-          :user_input => input.match,
+          :user_input => input,
           :confidence => CONFIDENCE[:high],
           :link_path => "link_to_href"
       end
-    elsif has_immediate_model? url_arg
+    elsif has_immediate_model? url_arg or model_find_call? url_arg
 
       # Decided NOT warn on models.  polymorphic_path is called it a model is 
       # passed to link_to (which passes it to url_for)
@@ -83,10 +84,32 @@ class Brakeman::CheckLinkToHref < Brakeman::CheckLinkTo
           :warning_type => "Cross Site Scripting", 
           :warning_code => :xss_link_to_href,
           :message => message,
-          :user_input => @matched.match,
+          :user_input => @matched,
           :confidence => CONFIDENCE[:med],
           :link_path => "link_to_href"
       end
     end
+  end
+
+  def ignore_call? target, method
+    decorated_model? method or super
+  end
+
+  def decorated_model? method
+    tracker.config.has_gem? :draper and
+      method == :decorate
+  end
+
+  def ignored_method? target, method
+    @ignore_methods.include? method or
+      method.to_s =~ /_path$/ or
+      (target.nil? and method.to_s =~ /_url$/)
+  end
+
+  def model_find_call? exp
+    return unless call? exp
+
+    MODEL_METHODS.include? exp.method or
+      exp.method.to_s =~ /^find_by_/
   end
 end

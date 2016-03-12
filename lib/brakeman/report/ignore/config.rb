@@ -1,5 +1,5 @@
 require 'set'
-require 'multi_json'
+require 'json'
 
 module Brakeman
   class IgnoreConfig
@@ -13,6 +13,7 @@ module Brakeman
       @ignored_fingerprints = Set.new
       @notes = {}
       @shown_warnings = @ignored_warnings = nil
+      @changed = false
     end
 
     # Populate ignored_warnings and shown_warnings based on ignore
@@ -35,8 +36,8 @@ module Brakeman
     # Remove warning from ignored list
     def unignore warning
       @ignored_fingerprints.delete warning.fingerprint
-      @already_ignored.reject! do |w|
-        w[:fingerprint] == warning.fingerprint
+      if @already_ignored.reject! { |w|w[:fingerprint] == warning.fingerprint }
+        @changed = true
       end
     end
 
@@ -46,11 +47,13 @@ module Brakeman
     end
 
     def ignore warning
+      @changed = true unless ignored? warning
       @ignored_fingerprints << warning.fingerprint
     end
 
     # Add note for warning
     def add_note warning, note
+      @changed = true
       @notes[warning.fingerprint] = note
     end
 
@@ -75,7 +78,7 @@ module Brakeman
     # Read configuration to file
     def read_from_file file = @file
       if File.exist? file
-        @already_ignored = MultiJson.load(File.read(file), :symbolize_keys => true)[:ignored_warnings]
+        @already_ignored = JSON.parse(File.read(file), :symbolize_names => true)[:ignored_warnings]
       else
         Brakeman.notify "[Notice] Could not find ignore configuration in #{file}"
         @already_ignored = []
@@ -98,7 +101,7 @@ module Brakeman
 
         w[:note] = @notes[w[:fingerprint]] || ""
         w
-      end
+      end.sort_by { |w| w[:fingerprint] }
 
       output = {
         :ignored_warnings => warnings,
@@ -107,7 +110,7 @@ module Brakeman
       }
 
       File.open file, "w" do |f|
-        f.puts MultiJson.dump(output, :pretty => true)
+        f.puts JSON.pretty_generate(output)
       end
     end
 
@@ -119,12 +122,14 @@ module Brakeman
       @already_ignored.each do |w|
         fingerprint = w[:fingerprint]
 
-        unless @ignored_warnings.find { |w| w.fingerprint == fingerprint }
+        unless @ignored_warnings.find { |ignored_warning| ignored_warning.fingerprint == fingerprint }
           warnings << w
         end
       end
 
-      save_to_file warnings
+      if @changed
+        save_to_file warnings
+      end
     end
   end
 end

@@ -1,27 +1,15 @@
-![Brakeman Logo](http://brakemanscanner.org/images/logo_medium.png)
+[![Brakeman Logo](http://brakemanscanner.org/images/logo_medium.png)](http://brakemanscanner.org/)
 
-[![Travis CI
-Status](https://secure.travis-ci.org/presidentbeef/brakeman.png)](https://travis-ci.org/presidentbeef/brakeman)
-[![Code
-Climate](https://codeclimate.com/github/presidentbeef/brakeman.png)](https://codeclimate.com/github/presidentbeef/brakeman)
+[![Build Status](https://travis-ci.org/presidentbeef/brakeman.svg?branch=master)](https://travis-ci.org/presidentbeef/brakeman)
+[![Code Climate](https://codeclimate.com/github/presidentbeef/brakeman/badges/gpa.svg)](https://codeclimate.com/github/presidentbeef/brakeman)
+[![Test Coverage](https://codeclimate.com/github/presidentbeef/brakeman/badges/coverage.svg)](https://codeclimate.com/github/presidentbeef/brakeman/coverage)
+[![Gitter](https://badges.gitter.im/presidentbeef/brakeman.svg)](https://gitter.im/presidentbeef/brakeman)
 
 # Brakeman
 
-Brakeman is a static analysis tool which checks Ruby on Rails applications for security vulnerabilities.
+Brakeman is an open source static analysis tool which checks Ruby on Rails applications for security vulnerabilities.
 
-It works with Rails 2.x, 3.x, and 4.x.
-
-There is also a [plugin available](http://brakemanscanner.org/docs/jenkins/) for Jenkins/Hudson.
-
-For even more continuous testing, try the [Guard plugin](https://github.com/guard/guard-brakeman).
-
-# Homepage/News
-
-Website: http://brakemanscanner.org/
-
-Twitter: http://twitter.com/brakeman
-
-Mailing list: brakeman@librelist.com
+Check out [Brakeman Pro](https://brakemanpro.com/) if you are looking for a commercially-supported version with a GUI and advanced features.
 
 # Installation
 
@@ -29,30 +17,35 @@ Using RubyGems:
 
     gem install brakeman
 
-Using Bundler, add to development group in Gemfile and set to not be required automatically:
+Using Bundler:
 
     group :development do
       gem 'brakeman', :require => false
     end
 
-From source:
-
-    gem build brakeman.gemspec
-    gem install brakeman*.gem
-
 # Usage
 
-    brakeman [app_path]
+From a Rails application's root directory:
 
-It is simplest to run Brakeman from the root directory of the Rails application. A path may also be supplied.
+    brakeman
 
-# Options
+Outside of Rails root:
+
+    brakeman /path/to/rails/application
+
+# Compatibility
+
+Brakeman works with Rails 2.x, 3.x, and 4.x.
+
+# Basic Options
+
+For a full list of options, use `brakeman --help` or see the [OPTIONS.md](OPTIONS.md) file.
 
 To specify an output file for the results:
 
     brakeman -o output_file
 
-The output format is determined by the file extension or by using the `-f` option. Current options are: `text`, `html`, `tabs`, `json` and `csv`.
+The output format is determined by the file extension or by using the `-f` option. Current options are: `text`, `html`, `tabs`, `json`, `markdown`, `csv`, and `codeclimate`.
 
 Multiple output files can be specified:
 
@@ -61,6 +54,8 @@ Multiple output files can be specified:
 To suppress informational warnings and just output the report:
 
     brakeman -q
+
+Note all Brakeman output except reports are sent to stderr, making it simple to redirect stdout to a file and just get the report.
 
 To see all kinds of debugging information:
 
@@ -78,28 +73,6 @@ To do the opposite and only run a certain set of tests:
 
     brakeman -t SQL,ValidationRegex
 
-To indicate certain methods are "safe":
-
-    brakeman -s benign_method,totally_safe
-
-By default, brakeman will assume that unknown methods involving untrusted data are dangerous. For example, this would cause a warning (Rails 2):
-
-    <%= some_method(:option => params[:input]) %>
-
-To only raise warnings only when untrusted data is being directly used:
-
-    brakeman -r
-
-By default, each check will be run in a separate thread. To disable this behavior:
-
-    brakeman -n
-
-Normally Brakeman will parse `routes.rb` and attempt to infer which controller methods are used as actions. However, this is not perfect (especially for Rails 3). To ignore the automatically inferred routes and assume all methods are actions:
-
-    brakeman -a
-
-Note that this will be enabled automatically if Brakeman runs into an error while parsing the routes.
-
 If Brakeman is running a bit slow, try
 
     brakeman --faster
@@ -110,13 +83,9 @@ By default, Brakeman will return 0 as an exit code unless something went very wr
 
     brakeman -z
 
-To skip certain files that Brakeman may have trouble parsing, use:
+To skip certain files or directories that Brakeman may have trouble parsing, use:
 
-    brakeman --skip-files file1,file2,etc
-
-Brakeman will raise warnings on models that use `attr_protected`. To suppress these warnings:
-
-    brakeman --ignore-protected
+    brakeman --skip-files file1,/path1/,path2/
 
 To compare results of a scan with a previous scan, use the JSON output option and then:
 
@@ -131,7 +100,7 @@ To create and manage this file, use:
 
 # Warning information
 
-See WARNING\_TYPES for more information on the warnings reported by this tool.
+See [WARNING\_TYPES](WARNING_TYPES) for more information on the warnings reported by this tool.
 
 # Warning context
 
@@ -163,6 +132,37 @@ The default config locations are `./config/brakeman.yml`, `~/.brakeman/config.ym
 
 The `-c` option can be used to specify a configuration file to use.
 
+# Continuous Integration
+
+There is a [plugin available](http://brakemanscanner.org/docs/jenkins/) for Jenkins/Hudson.
+
+For even more continuous testing, try the [Guard plugin](https://github.com/guard/guard-brakeman).
+
+# Building
+
+    git clone git://github.com/presidentbeef/brakeman.git
+    cd brakeman
+    gem build brakeman.gemspec
+    gem install brakeman*.gem
+
+# Who is Using Brakeman?
+
+* [Code Climate](https://codeclimate.com/)
+* [GitHub](https://github.com/)
+* [Groupon](http://www.groupon.com/)
+* [New Relic](http://newrelic.com)
+* [Twitter](https://twitter.com/)
+
+[..and more!](http://brakemanscanner.org/brakeman_users)
+
+# Homepage/News
+
+Website: http://brakemanscanner.org/
+
+Twitter: http://twitter.com/brakeman
+
+Mailing list: brakeman@librelist.com
+
 # License
 
-see MIT-LICENSE
+see [MIT-LICENSE](MIT-LICENSE)

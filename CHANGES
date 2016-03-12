@@ -1,3 +1,290 @@
+# 3.2.1
+
+* Remove `multi_json` dependency from `bin/brakeman`
+
+# 3.2.0
+
+* Skip Symbol DoS check on Rails 5
+* Only update ignore config file on changes
+* Sort ignore config file
+* Support calls using `&.` operator
+* Update ruby_parser dependency to 3.8.1
+* Remove `fastercsv` dependency
+* Fix finding calls with `targets: nil`
+* Remove `multi_json` dependecy
+* Handle CoffeeScript in HAML
+* Avoid render warnings about params[:action]/params[:controller]
+* Index calls in class bodies but outside methods
+
+# 3.1.5
+
+* Fix CodeClimate construction of --only-files (Will Fleming)
+* Add check for denial of service via routes (CVE-2015-7581)
+* Warn about RCE with `render params` (CVE-2016-0752)
+* Add check for `strip_tags` XSS (CVE-2015-7579)
+* Add check for `sanitize` XSS (CVE-2015-7578/80)
+* Add check for `reject_if` proc bypass (CVE-2015-7577)
+* Add check for mime-type denial of service (CVE-2016-0751)
+* Add check for basic auth timing attack (CVE-2015-7576)
+* Add initial Rails 5 support
+* Check for implict integer comparison in dynamic finders
+* Support directories better in --only-files and --skip-files (Patrick Toomey)
+* Avoid warning about `permit` in SQL
+* Handle guards using `detect`
+* Avoid warning on user input in comparisons
+* Handle module names with self methods
+* Add session manipulation documentation
+
+# 3.1.4
+
+* Emit brakeman's native fingerprints for Code Climate engine (Noah Davis)
+* Ignore secrets.yml if in .gitignore
+* Clean up Ruby warnings (Andy Waite)
+* Increase test coverage for option parsing (Zander Mackie)
+* Work around safe_yaml error
+
+# 3.1.3
+
+* Check for session secret in secrets.yml
+* Respect `exit_on_warn` in config file
+* Avoid warning on `without_protection: true` with hash literals
+* Make sure before_filter call with block is still a call
+* CallIndex improvements
+* Restore minimum Highline version (Kevin Glowacz)
+* Add Code Climate output format (Ashley Baldwin-Hunter/Devon Blandin/John Pignata/Michael Bernstein)
+* Iteratively replace values
+* Output nil instead of false for user_input in JSON
+* Depend on safe_yaml 1.0 or later
+* Test coverage improvements for Brakema module (Bethany Rentz)
+
+# 3.1.2
+
+* Treat `current_user` like a model
+* Set user input value for inline renders
+* Avoid warning on inline renders with safe content types
+* Handle empty interpolation in HAML filters
+* Ignore filters that are not method names
+* Avoid warning about model find/find_by* in hrefs
+* Use SafeYAML to load configuration files
+* Warn on SQL query keys, not values in hashes
+* Allow inspection of recursive Sexps
+* Add line numbers to class-level warnings
+* Handle `private def ...`
+* Catch divide-by-zero in alias processing
+* Reduce string allocations in Warning#initialize
+* Sortable tables in HTML report (David Lanner)
+* Search for config file relative to application root
+
+# 3.1.1
+
+* Add optional check for use of MD5 and SHA1
+* Avoid warning when linking to decorated models
+* Add check for user input in session keys
+* Fix chained assignment
+* Treat a.try(&:b) like a.b()
+* Consider j/escape_javascript safe inside HAML JavaScript blocks
+* Better HAML processing of find_and_preserve calls
+* Add more Arel methods to be ignored in SQL
+* Fix absolute paths for Windows (Cody Frederick)
+* Support newer terminal-table releases
+* Allow searching call index methods by regex (Alex Ianus)
+
+# 3.1.0
+
+* Add support for gems.rb/gems.locked
+* Update render path information in JSON reports
+* Remove renaming of several Sexp nodes
+* Convert YAML config keys to symbols (Karl Glaser)
+* Use railties version if rails gem is missing (Lucas Mazza)
+* Warn about unverified SSL mode in Net::HTTP.start
+* Add Model, Controller, Template, Config classes internally
+* Report file being parsed in debug output
+* Update dependencies to Ruby 1.8 incompatible versions
+* Treat Array.new and Hash.new as arrays/hashes
+* Fix handling of string concatenation with existing string
+* Treat html_safe like raw()
+* Fix low confidence XSS warning code
+* Avoid warning on path creation methods in link_to
+* Expand safe methods to match methods with targets
+* Avoid duplicate eval() warnings
+
+# 3.0.5
+
+* Fix check for CVE-2015-3227
+
+# 3.0.4
+
+* Add check for CVE-2015-3226 (XSS via JSON keys)
+* Add check for CVE-2015-3227 (XML DoS)
+* Treat `<%==` as unescaped output
+* Update `ruby_parser` dependency to 3.7.0
+
+# 3.0.3
+
+* Ignore more Arel methods in SQL
+* Warn about protect_from_forgery without exceptions (Neil Matatall)
+* Handle lambdas as filters
+* Ignore quoted_table_name in SQL (Gabriel Sobrinho)
+* Warn about RCE and file access with `open`
+* Handle array include? guard conditionals
+* Do not ignore targets of `to_s` in SQL
+* Add Rake task to exit with error code on warnings (masarakki)
+
+# 3.0.2
+
+* Alias process methods called in class scope on models
+* Treat primary_key, table_name_prefix, table_name_suffix as safe in SQL
+* Fix using --compare and --add-checks-path together
+* Avoid warning about mass assignment with string literals
+* Only report original regex DoS locations
+* Improve render path information implementation
+* Report correct file for simple_format usage CVE warning
+* Remove URI.escape from HTML reports with GitHub repos
+* Update ruby_parser to ~> 3.6.2
+* Remove formatting newlines in HAML template output
+* Ignore case value in XSS checks
+* Fix CSV output when there are no warnings
+* Handle processing of explictly shadowed block arguments
+
+# 3.0.1
+
+* Avoid protect_from_forgery warning unless ApplicationController inherits from ActionController::Base
+* Properly format command interpolation (again)
+* Remove Slim dependency (Casey West)
+* Allow for controllers/models/templates in directories under `app/` (Neal Harris)
+* Add `--add-libs-path` for additional libraries (Patrick Toomey)
+* Properly process libraries (Patrick Toomey)
+
+# 3.0.0
+
+* Add check for CVE-2014-7829
+* Add check for cross site scripting via inline renders
+* Fix formatting of command interpolation
+* Local variables are no longer formatted as `(local var)`
+* Actually skip skipped before filters
+* `--exit-on-warn --compare` only returns error code on new warnings (Jeff Yip)
+* Fix parsing of `<%==` in ERB
+* Sort warnings by fingerprint in JSON report (Jeff Yip)
+* Handle symmetric multiple assignment
+* Do not branch for self attribute assignment `x = x.y`
+* Fix CVE for CVE-2011-2932
+* Remove "fake filters" from warning fingerpints
+* Index calls in `lib/` files
+* Move Symbol DoS to optional checks
+* CVEs report correct line and file name (Gemfile/Gemfile.lock) (Rob Fletcher)
+* Change `--separate-models` to be the default
+
+# 2.6.3
+
+* Whitelist `exists` arel method from SQL injection check
+* Avoid warning about Symbol DoS on safe parameters as method targets
+* Fix stack overflow in ProcessHelper#class_name
+* Add optional check for unscoped find queries (Ben Toews)
+* Add framework for optional checks
+* Fix stack overflow for cycles in class ancestors (Jeff Rafter)
+
+# 2.6.2 
+
+* Add check for CVE-2014-3415
+* Avoid warning about symbolizing safe parameters
+* Update ruby2ruby dependency to 2.1.1
+* Expand app path in one place instead of all over (Jeff Rafter)
+* Add `--add-checks-path` option for external checks (Clint Gibler)
+* Fix SQL injection detection in deep nested string building
+* Add `-4` option to force Rails 4 mode
+* Check entire call for `send`
+* Check for .gitignore of secrets in subdirectories
+* Fix block statment endings in Erubis
+* Fix undefined variable in controller processing error (Jason Barnabe) 
+
+# 2.6.1
+
+* Add check for CVE-2014-3482 and CVE-2014-3483
+* Add support for keyword arguments in blocks
+* Remove unused warning codes (Bill Fischer)
+
+# 2.6.0
+
+* Fix detection of `:host` setting in redirects with chained calls
+* Add check for CVE-2014-0130
+* Add `find_by`/`find_by!` to SQLi check for Rails 4
+* Parse most files upfront instead of on demand
+* Do not branch values for `+=`
+* Update to use RubyParser 3.5.0 (Patrick Toomey)
+* Improve default route detection in Rails 3/4 (Jeff Jarmoc)
+* Handle controllers and models split across files (Patrick Toomey)
+* Fix handling of `protected_attributes` gem in Rails 4 (Geoffrey Hichborn)
+* Ignore more model methods in redirects
+* Fix CheckRender with nested render calls
+
+# 2.5.0
+
+ * Add support for RailsLTS 2.3.18.7 and 2.3.18.8
+ * Add support for Rails 4 `before_actions` and friends
+ * Move SQLi CVE checks to `CheckSQLCVEs`
+ * Check for protected_attributes gem
+ * Fix SQLi detection in chain calls in scopes
+ * Add GitHub-flavored Markdown output format (Greg Ose)
+ * Fix false positives when sanitize() is used in SQL (Jeff Yip)
+ * Add String#intern and Hash#symbolize_keys DoS check (Jan Rusnacko)
+ * Check all arguments in Model.select for SQLi
+ * Fix false positive when :host is specified in redirect
+ * Handle more non-literals in routes
+ * Add check for regex denial of service (Ben Toews) 
+
+# 2.4.3
+
+ No changes. 2.4.2 gem release was unsigned, 2.4.3 is signed.
+
+# 2.4.2
+
+ * Remove `rescue Exception`
+ * Fix duplicate warnings about sanitize CVE
+ * Reuse duplicate call location information
+ * Only track original template output locations
+ * Skip identically rendered templates
+ * Fix HAML template processing
+
+# 2.4.1
+
+ * Add check for CVE-2014-0082
+ * Add check for CVE-2014-0081, replaces CVE-2013-6415
+ * Add check for CVE-2014-0080
+
+# 2.4.0 
+
+ * Detect Rails LTS versions
+ * Reduce false positives for SQL injection in string building
+ * More accurate user input marking for SQL injection warnings
+ * Detect SQL injection in `delete_all`/`destroy_all`
+ * Detect SQL injection raw SQL queries using `connection`
+ * Parse exact versions from Gemfile.lock for all gems
+ * Ignore generators
+ * Update to RubyParser 3.4.0
+ * Fix false positives when SQL methods are not called on AR models (Aaron Bedra)
+ * Add check for uses of OpenSSL::SSL::VERIFY_NONE (Aaron Bedra)
+ * No longer raise exceptions if a class name cannot be determined
+ * Fingerprint attribute warnings individually (Case Taintor)
+
+# 2.3.1
+
+ * Fix check for CVE-2013-4491 (i18n XSS) to detect workaround
+ * Fix link for CVE-2013-6415 (number_to_currency)
+
+# 2.3.0
+
+ * Add check for Parameters#permit!
+ * Add check for CVE-2013-4491 (i18n XSS)
+ * Add check for CVE-2013-6414 (header DoS)
+ * Add check for CVE-2013-6415 (number_to_currency)
+ * Add check for CVE-2013-6416 (simple_format XSS)
+ * Add check for CVE-2013-6417 (query generation) 
+ * Fix typos in reflection and translate bug messages
+ * Collapse send/try calls 
+ * Fix Slim XSS false positives (Noah Davis)
+ * Whitelist `Model#create` for redirects
+ * Fix scoping issues with instance variables and blocks
+
 # 2.2.0 
 
  * Reduce command injection false positives

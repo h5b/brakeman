@@ -1,4 +1,4 @@
-require 'brakeman/processors/base_processor'
+require 'brakeman/processors/lib/basic_processor'
 
 #Finds method calls matching the given target(s).
 #   #-- This should be deprecated --#
@@ -31,7 +31,7 @@ require 'brakeman/processors/base_processor'
 #
 # #Find all calls to sub, sub!, gsub, or gsub!
 # FindCall.new nil, /^g?sub!?$/
-class Brakeman::FindCall < Brakeman::BaseProcessor
+class Brakeman::FindCall < Brakeman::BasicProcessor
 
   def initialize targets, methods, tracker, in_depth = false
     super tracker
@@ -68,11 +68,11 @@ class Brakeman::FindCall < Brakeman::BaseProcessor
   end
 
   #Process body of method
-  def process_methdef exp
+  def process_defn exp
     process_all exp.body
   end
 
-  alias :process_selfdef :process_methdef
+  alias :process_defs :process_defn
 
   #Process body of block
   def process_rlist exp
@@ -102,7 +102,7 @@ class Brakeman::FindCall < Brakeman::BaseProcessor
     #  User.find(:first, :conditions => "user = '#{params['user']}').name
     #
     #A search for User.find will not match this unless @in_depth is true.
-    if @in_depth and node_type? exp.target, :call
+    if @in_depth and call? exp.target
       process exp.target
     end
 

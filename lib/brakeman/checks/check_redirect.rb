@@ -13,10 +13,14 @@ class Brakeman::CheckRedirect < Brakeman::BaseCheck
   def run_check
     Brakeman.debug "Finding calls to redirect_to()"
 
-    @model_find_calls = Set[:all, :find, :find_by_sql, :first, :last, :new]
+    @model_find_calls = Set[:all, :create, :create!, :find, :find_by_sql, :first, :last, :new]
 
     if tracker.options[:rails3]
       @model_find_calls.merge [:from, :group, :having, :joins, :lock, :order, :reorder, :select, :where]
+    end
+
+    if version_between? "4.0.0", "9.9.9"
+      @model_find_calls.merge [:find_by, :find_by!, :take]
     end
 
     @tracker.find_call(:target => false, :method => :redirect_to).each do |res|
@@ -31,7 +35,11 @@ class Brakeman::CheckRedirect < Brakeman::BaseCheck
 
     method = call.method
 
-    if method == :redirect_to and not only_path?(call) and res = include_user_input?(call)
+    if method == :redirect_to and
+        not only_path?(call) and
+        not explicit_host?(call.first_arg) and
+        res = include_user_input?(call)
+
       add_result result
 
       if res.type == :immediate
@@ -45,7 +53,7 @@ class Brakeman::CheckRedirect < Brakeman::BaseCheck
         :warning_code => :open_redirect,
         :message => "Possible unprotected redirect",
         :code => call,
-        :user_input => res.match,
+        :user_input => res,
         :confidence => confidence
     end
   end
@@ -109,6 +117,26 @@ class Brakeman::CheckRedirect < Brakeman::BaseCheck
     false
   end
 
+  def explicit_host? arg
+    return unless sexp? arg
+
+    if hash? arg
+      if value = hash_access(arg, :host)
+        return !has_immediate_user_input?(value)
+      end
+    elsif call? arg
+      target = arg.target
+
+      if hash? target and value = hash_access(target, :host)
+        return !has_immediate_user_input?(value)
+      elsif call? arg
+        return explicit_host? target
+      end
+    end
+
+    false
+  end
+
   #+url_for+ is only_path => true by default. This checks to see if it is
   #set to false for some reason.
   def check_url_for call
@@ -128,13 +156,20 @@ class Brakeman::CheckRedirect < Brakeman::BaseCheck
     if node_type? exp, :or
       model_instance? exp.lhs or model_instance? exp.rhs
     elsif call? exp
-      if model_name? exp.target or friendly_model? exp.target and
+      if model_target? exp and
         (@model_find_calls.include? exp.method or exp.method.to_s.match(/^find_by_/))
         true
       else
         association?(exp.target, exp.method)
       end
     end
+  end
+
+  def model_target? exp
+    return false unless call? exp
+    model_name? exp.target or
+    friendly_model? exp.target or
+    model_target? exp.target
   end
 
   #Returns true if exp is (probably) a friendly model instance
@@ -149,8 +184,7 @@ class Brakeman::CheckRedirect < Brakeman::BaseCheck
     if node_type? exp, :or
       decorated_model? exp.lhs or decorated_model? exp.rhs
     else
-      tracker.config[:gems] and
-      tracker.config[:gems][:draper] and
+      tracker.config.has_gem? :draper and
       call? exp and
       node_type?(exp.target, :const) and
       exp.target.value.to_s.match(/Decorator$/) and
@@ -170,14 +204,6 @@ class Brakeman::CheckRedirect < Brakeman::BaseCheck
 
     return false unless model
 
-    model[:associations].each do |name, args|
-      args.each do |arg|
-        if symbol? arg and arg.value == meth
-          return true
-        end
-      end
-    end
-
-    false
+    model.association? meth
   end
 end

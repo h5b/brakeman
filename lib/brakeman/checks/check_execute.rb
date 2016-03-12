@@ -22,10 +22,12 @@ class Brakeman::CheckExecute < Brakeman::BaseCheck
     Brakeman.debug "Finding system calls using ``"
     check_for_backticks tracker
 
+    check_open_calls
+
     Brakeman.debug "Finding other system calls"
     calls = tracker.find_call :targets => [:IO, :Open3, :Kernel, :'POSIX::Spawn', :Process, nil],
       :methods => [:capture2, :capture2e, :capture3, :exec, :pipeline, :pipeline_r,
-        :pipeline_rw, :pipeline_start, :pipeline_w, :popen, :popen2, :popen2e, 
+        :pipeline_rw, :pipeline_start, :pipeline_w, :popen, :popen2, :popen2e,
         :popen3, :spawn, :syscall, :system]
 
     Brakeman.debug "Processing system calls"
@@ -57,12 +59,36 @@ class Brakeman::CheckExecute < Brakeman::BaseCheck
       end
 
       warn :result => result,
-        :warning_type => "Command Injection", 
+        :warning_type => "Command Injection",
         :warning_code => :command_injection,
         :message => "Possible command injection",
         :code => call,
-        :user_input => failure.match,
+        :user_input => failure,
         :confidence => confidence
+    end
+  end
+
+  def check_open_calls
+    tracker.find_call(:targets => [nil, :Kernel], :method => :open).each do |result|
+      if match = dangerous_open_arg?(result[:call].first_arg)
+        warn :result => result,
+          :warning_type => "Command Injection",
+          :warning_code => :command_injection,
+          :message => "Possible command injection in open()",
+          :user_input => match,
+          :confidence => CONFIDENCE[:high]
+      end
+    end
+  end
+
+  def dangerous_open_arg? exp
+    if string_interp? exp
+      # Check for input at start of string
+      exp[1] == "" and
+        node_type? exp[2], :evstr and
+        has_immediate_user_input? exp[2]
+    else
+      has_immediate_user_input? exp
     end
   end
 
@@ -85,10 +111,8 @@ class Brakeman::CheckExecute < Brakeman::BaseCheck
 
     if input = include_user_input?(exp)
       confidence = CONFIDENCE[:high]
-      user_input = input.match
     elsif input = dangerous?(exp)
       confidence = CONFIDENCE[:med]
-      user_input = input
     else
       return
     end
@@ -98,7 +122,7 @@ class Brakeman::CheckExecute < Brakeman::BaseCheck
       :warning_code => :command_injection,
       :message => "Possible command injection",
       :code => exp,
-      :user_input => user_input,
+      :user_input => input,
       :confidence => confidence
   end
 
@@ -111,7 +135,7 @@ class Brakeman::CheckExecute < Brakeman::BaseCheck
         e = e.target
       end
 
-      if node_type? e, :or, :evstr, :string_eval, :string_interp
+      if node_type? e, :or, :evstr, :dstr
         if res = dangerous?(e)
           return res
         end

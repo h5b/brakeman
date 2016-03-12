@@ -29,6 +29,15 @@ module Brakeman::ProcessorHelper
 
     exp
   end
+
+  def process_class exp
+    current_class = @current_class
+    @current_class = class_name exp[1]
+    process_all exp.body
+    @current_class = current_class
+    exp
+  end
+
   #Sets the current module.
   def process_module exp
     module_name = class_name(exp.class_name).to_s
@@ -51,32 +60,16 @@ module Brakeman::ProcessorHelper
     exp
   end
 
-  #Returns a class name as a Symbol.
-  def class_name exp
-    case exp
-    when Sexp
-      case exp.node_type
-      when :const
-        exp.value
-      when :lvar
-        exp.value.to_sym
-      when :colon2
-        "#{class_name(exp.lhs)}::#{exp.rhs}".to_sym
-      when :colon3
-        "::#{exp.value}".to_sym
-      when :call
-        process exp
-      when :self
-        @current_class || @current_module || nil
-      else
-        raise "Error: Cannot get class name from #{exp}"
-      end
-    when Symbol
+  # e.g. private defn
+  def process_call_defn? exp
+    if call? exp and exp.target.nil? and node_type? exp.first_arg, :defn, :defs and [:private, :public, :protected].include? exp.method
+      prev_visibility = @visibility
+      @visibility = exp.method
+      process exp.first_arg
+      @visibility = prev_visibility
       exp
-    when nil
-      nil
     else
-      raise "Error: Cannot get class name from #{exp}"
+      false
     end
   end
 end

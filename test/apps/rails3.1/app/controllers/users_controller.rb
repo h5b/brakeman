@@ -180,4 +180,22 @@ class UsersController < ApplicationController
   include UserMixin
 
   before_filter :assign_if, :only => :test_assign_if
+
+  def redirect_merge
+    redirect_to params.merge(host: 'http://app.webthing.com/stuff', port: '80').except(:action, :controller, :auth_token)
+  end
+
+  def drape
+    @user = (params[:id] ? User.find(params[:id]) : current_user).decorate
+  end
+
+  def mass_again
+    User.new(stuff, :without_protection => true)
+  end
+
+  def dynamic_finders
+    User.find_by_name_and_password(params[:name], params[:pass])
+    User.find_by_reset_code(params[:code])
+    Product.find_by_guid(params[:guid].to_s) # No warn
+  end
 end

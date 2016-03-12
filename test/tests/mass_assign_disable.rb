@@ -9,7 +9,7 @@ class MassAssignDisableTest < Test::Unit::TestCase
     end
 
     assert_changes
-    assert_fixed 3
+    assert_fixed 4
     assert_new 0
   end
 
@@ -57,6 +57,33 @@ class MassAssignDisableTest < Test::Unit::TestCase
 
     #We disable whitelist, but add strong_parameters globally, so
     #there should be no change.
+    assert_reindex :none
+    assert_changes
+    assert_fixed 0
+    assert_new 0
+  end
+
+  def test_protected_attributes_gem_without_whitelist_attributes
+    before_rescan_of "gems.rb", "rails4_with_engines" do
+      append "gems.rb", "gem 'protected_attributes'"
+    end
+
+    assert_reindex :none
+    assert_changes
+    assert_fixed 0
+    assert_new 1
+  end
+
+  def test_protected_attributes_gem_with_whitelist_attributes
+    config = "config/environments/production.rb"
+
+    before_rescan_of ["gems.rb", config], "rails4_with_engines" do
+      append "gems.rb", "gem 'protected_attributes'"
+
+      replace config, "config.active_record.whitelist_attributes = false",
+        "config.active_record.whitelist_attributes = true"
+    end
+
     assert_reindex :none
     assert_changes
     assert_fixed 0

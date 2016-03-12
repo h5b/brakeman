@@ -14,7 +14,7 @@ class Brakeman::CheckDetailedExceptions < Brakeman::BaseCheck
   end
 
   def check_local_request_config
-    if true? tracker.config[:rails][:consider_all_requests_local]
+    if true? tracker.config.rails[:consider_all_requests_local]
       warn :warning_type => "Information Disclosure",
            :warning_code => :local_request_config,
            :message => "Detailed exceptions are enabled in production",
@@ -25,11 +25,12 @@ class Brakeman::CheckDetailedExceptions < Brakeman::BaseCheck
 
   def check_detailed_exceptions
     tracker.controllers.each do |name, controller|
-      controller[:public].each do |name, method|
-        body = method.body.last
+      controller.methods_public.each do |method_name, definition|
+        src = definition[:src]
+        body = src.body.last
         next unless body
 
-        if name == :show_detailed_exceptions? and not safe? body
+        if method_name == :show_detailed_exceptions? and not safe? body
           if true? body
             confidence = CONFIDENCE[:high]
           else
@@ -40,8 +41,8 @@ class Brakeman::CheckDetailedExceptions < Brakeman::BaseCheck
                :warning_code => :detailed_exceptions,
                :message => "Detailed exceptions may be enabled in 'show_detailed_exceptions?'",
                :confidence => confidence,
-               :code => method,
-               :file => controller[:file]
+               :code => src,
+               :file => definition[:file]
         end
       end
     end

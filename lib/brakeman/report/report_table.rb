@@ -57,12 +57,10 @@ class Brakeman::Report::Table < Brakeman::Report::Base
     out_processor = Brakeman::OutputProcessor.new
     template_rows = {}
     tracker.templates.each do |name, template|
-      unless template[:outputs].empty?
-        template[:outputs].each do |out|
-          out = out_processor.format out
-          template_rows[name] ||= []
-          template_rows[name] << out.gsub("\n", ";").gsub(/\s+/, " ")
-        end
+      template.each_output do |out|
+        out = out_processor.format out
+        template_rows[name] ||= []
+        template_rows[name] << out.gsub("\n", ";").gsub(/\s+/, " ")
       end
     end
 
@@ -98,7 +96,7 @@ class Brakeman::Report::Table < Brakeman::Report::Base
 
 +BRAKEMAN REPORT+
 
-Application path: #{File.expand_path tracker.options[:app_path]}
+Application path: #{tracker.app_path}
 Rails version: #{rails_version}
 Brakeman version: #{Brakeman::Version}
 Started at #{tracker.start_time}

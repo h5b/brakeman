@@ -1,6 +1,7 @@
 require 'set'
 require 'brakeman/processors/alias_processor'
 require 'brakeman/processors/lib/render_helper'
+require 'brakeman/processors/lib/render_path'
 require 'brakeman/tracker'
 
 #Processes aliasing in templates.
@@ -17,23 +18,25 @@ class Brakeman::TemplateAliasProcessor < Brakeman::AliasProcessor
   end
 
   #Process template
-  def process_template name, args
+  def process_template name, args, _, line = nil
+    file = relative_path(@template.file || @tracker.templates[@template.name])
+
     if @called_from
-      unless @called_from.grep(/Template:#{name}$/).empty?
-        Brakeman.debug "Skipping circular render from #{@template[:name]} to #{name}"
+      if @called_from.include_template? name
+        Brakeman.debug "Skipping circular render from #{@template.name} to #{name}"
         return
       end
 
-      super name, args, @called_from + ["Template:#{@template[:name]}"]
+      super name, args, @called_from.dup.add_template_render(@template.name, line, file)
     else
-      super name, args, ["Template:#{@template[:name]}"]
+      super name, args, Brakeman::RenderPath.new.add_template_render(@template.name, line, file)
     end
   end
 
   #Determine template name
   def template_name name
-    unless name.to_s.include? "/"
-      name = "#{@template[:name].to_s.match(/^(.*\/).*$/)[1]}#{name}"
+    if !name.to_s.include?('/') && @template.name.to_s.include?('/')
+      name = "#{@template.name.to_s.match(/^(.*\/).*$/)[1]}#{name}"
     end
     name
   end
@@ -42,7 +45,7 @@ class Brakeman::TemplateAliasProcessor < Brakeman::AliasProcessor
   FORM_BUILDER_CALL = Sexp.new(:call, Sexp.new(:const, :FormBuilder), :new)
 
   #Looks for form methods and iterating over collections of Models
-  def process_call_with_block exp
+  def process_iter exp
     process_default exp
 
     call = exp.block_call
@@ -76,8 +79,6 @@ class Brakeman::TemplateAliasProcessor < Brakeman::AliasProcessor
     exp
   end
 
-  alias process_iter process_call_with_block
-
   #Checks if +exp+ is a call to Model.all or Model.find*
   def get_model_target exp
     if call? exp
@@ -85,13 +86,8 @@ class Brakeman::TemplateAliasProcessor < Brakeman::AliasProcessor
 
       if exp.method == :all or exp.method.to_s[0,4] == "find"
         models = Set.new @tracker.models.keys
-
-        begin
-          name = class_name target
-          return target if models.include?(name)
-        rescue StandardError
-        end
-
+        name = class_name target
+        return target if models.include?(name)
       end
 
       return get_model_target(target)

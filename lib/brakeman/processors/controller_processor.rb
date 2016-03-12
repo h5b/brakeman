@@ -1,4 +1,5 @@
 require 'brakeman/processors/base_processor'
+require 'brakeman/tracker/controller'
 
 #Processes controller. Results are put in tracker.controllers
 class Brakeman::ControllerProcessor < Brakeman::BaseProcessor
@@ -7,7 +8,7 @@ class Brakeman::ControllerProcessor < Brakeman::BaseProcessor
   def initialize app_tree, tracker
     super(tracker)
     @app_tree = app_tree
-    @controller = nil
+    @current_class = nil
     @current_method = nil
     @current_module = nil
     @visibility = :public
@@ -23,18 +24,12 @@ class Brakeman::ControllerProcessor < Brakeman::BaseProcessor
   #s(:class, NAME, PARENT, s(:scope ...))
   def process_class exp
     name = class_name(exp.class_name)
-
-    begin
-      parent = class_name exp.parent_name
-    rescue StandardError => e
-      Brakeman.debug e
-      parent = nil
-    end
+    parent = class_name(exp.parent_name)
 
     #If inside a real controller, treat any other classes as libraries.
     #But if not inside a controller already, then the class may include
     #a real controller, so we can't take this shortcut.
-    if @controller and @controller[:name].to_s.end_with? "Controller"
+    if @current_class and @current_class.name.to_s.end_with? "Controller"
       Brakeman.debug "[Notice] Treating inner class as library: #{name}"
       Brakeman::LibraryProcessor.new(@tracker).process_library exp, @file_name
       return exp
@@ -42,61 +37,80 @@ class Brakeman::ControllerProcessor < Brakeman::BaseProcessor
 
     if not name.to_s.end_with? "Controller"
       Brakeman.debug "[Notice] Adding noncontroller as library: #{name}"
-
-      current_controller = @controller
-
       #Set the class to be a module in order to get the right namespacing.
       #Add class to libraries, in case it is needed later (e.g. it's used
       #as a parent class for a controller.)
       #However, still want to process it in this class, so have to set
-      #@controller to this not-really-a-controller thing.
-      process_module exp do
-        name = @current_module
-
-        if @tracker.libs[name.to_sym]
-          @controller = @tracker.libs[name]
-        else
-          set_controller name, parent, exp
-          @tracker.libs[name.to_sym] = @controller
-        end
-
-        process_all exp.body
-      end
-
-      @controller = current_controller
+      #@current_class to this not-really-a-controller thing.
+      process_module exp, parent
 
       return exp
     end
 
-    if @current_module
-      name = (@current_module.to_s + "::" + name.to_s).to_sym
+    if @current_class
+      outer_class = @current_class
+      name = (outer_class.name.to_s + "::" + name.to_s).to_sym
     end
 
-    set_controller name, parent, exp
+    if @current_module
+      name = (@current_module.name.to_s + "::" + name.to_s).to_sym
+    end
 
-    @tracker.controllers[@controller[:name]] = @controller
+    if @tracker.controllers[name]
+      @current_class = @tracker.controllers[name]
+      @current_class.add_file @file_name, exp
+    else
+      @current_class = Brakeman::Controller.new name, parent, @file_name, exp, @tracker
+      @tracker.controllers[name] = @current_class
+    end
 
     exp.body = process_all! exp.body
     set_layout_name
 
-    @controller = nil
+    if outer_class
+      @current_class = outer_class
+    else
+      @current_class = nil
+    end
+
     exp
   end
 
-  def set_controller name, parent, exp
-    @controller = { :name => name,
-                    :parent => parent,
-                    :includes => [],
-                    :public => {},
-                    :private => {},
-                    :protected => {},
-                    :options => {:before_filters => []},
-                    :src => exp,
-                    :file => @file_name }
+  def process_module exp, parent = nil
+    name = class_name(exp.module_name)
+
+    if @current_module
+      outer_module = @current_module
+      name = (outer_module.name.to_s + "::" + name.to_s).to_sym
+    end
+
+    if @current_class
+      name = (@current_class.name.to_s + "::" + name.to_s).to_sym
+    end
+
+    if @tracker.libs[name]
+      @current_module = @tracker.libs[name]
+      @current_module.add_file @file_name, exp
+    else
+      @current_module = Brakeman::Controller.new name, parent, @file_name, exp, @tracker
+      @tracker.libs[name] = @current_module
+    end
+
+    exp.body = process_all! exp.body
+
+    if outer_module
+      @current_module = outer_module
+    else
+      @current_module = nil
+    end
+
+    exp
   end
 
   #Look for specific calls inside the controller
   def process_call exp
+    return exp if process_call_defn? exp
+
     target = exp.target
     if sexp? target
       target = process target
@@ -108,41 +122,50 @@ class Brakeman::ControllerProcessor < Brakeman::BaseProcessor
 
     #Methods called inside class definition
     #like attr_* and other settings
-    if @current_method.nil? and target.nil? and @controller
+    if @current_method.nil? and target.nil? and @current_class
       if first_arg.nil? #No args
         case method
         when :private, :protected, :public
           @visibility = method
         when :protect_from_forgery
-          @controller[:options][:protect_from_forgery] = true
+          @current_class.options[:protect_from_forgery] = true
         else
           #??
         end
       else
         case method
         when :include
-          @controller[:includes] << class_name(first_arg) if @controller
-        when :before_filter, :append_before_filter
-          @controller[:options][:before_filters] << exp.args
-        when :prepend_before_filter
-          @controller[:options][:before_filters].unshift exp.args
+          @current_class.add_include class_name(first_arg) if @current_class
+        when :before_filter, :append_before_filter, :before_action, :append_before_action
+          if node_type? exp.first_arg, :iter
+            add_lambda_filter exp
+          else
+            @current_class.add_before_filter exp
+          end
+        when :prepend_before_filter, :prepend_before_action
+          if node_type? exp.first_arg, :iter
+            add_lambda_filter exp
+          else
+            @current_class.prepend_before_filter exp
+          end
+        when :skip_before_filter, :skip_filter, :skip_before_action, :skip_action_callback
+          @current_class.skip_filter exp
         when :layout
           if string? last_arg
             #layout "some_layout"
 
             name = last_arg.value.to_s
             if @app_tree.layout_exists?(name)
-              @controller[:layout] = "layouts/#{name}"
+              @current_class.layout = "layouts/#{name}"
             else
               Brakeman.debug "[Notice] Layout not found: #{name}"
             end
           elsif node_type? last_arg, :nil, :false
             #layout :false or layout nil
-            @controller[:layout] = false
+            @current_class.layout = false
           end
         else
-          @controller[:options][method] ||= []
-          @controller[:options][method] << exp
+          @current_class.add_option method, exp
         end
       end
 
@@ -168,10 +191,16 @@ class Brakeman::ControllerProcessor < Brakeman::BaseProcessor
   def process_defn exp
     name = exp.method_name
     @current_method = name
-    res = Sexp.new :methdef, name, exp.formal_args, *process_all!(exp.body)
+    res = Sexp.new :defn, name, exp.formal_args, *process_all!(exp.body)
     res.line(exp.line)
     @current_method = nil
-    @controller[@visibility][name] = res unless @controller.nil?
+
+    if @current_class
+      @current_class.add_method @visibility, name, res, @file_name
+    elsif @current_module
+      @current_module.add_method @visibility, name, res, @file_name
+    end
+
     res
   end
 
@@ -179,11 +208,11 @@ class Brakeman::ControllerProcessor < Brakeman::BaseProcessor
   def process_defs exp
     name = exp.method_name
 
-    if exp[1].node_type == :self
-      if @controller
-        target = @controller[:name]
+    if node_type? exp[1], :self
+      if @current_class
+        target = @current_class.name
       elsif @current_module
-        target = @current_module
+        target = @current_module.name
       else
         target = nil
       end
@@ -192,18 +221,29 @@ class Brakeman::ControllerProcessor < Brakeman::BaseProcessor
     end
 
     @current_method = name
-    res = Sexp.new :selfdef, target, name, exp.formal_args, *process_all!(exp.body)
+    res = Sexp.new :defs, target, name, exp.formal_args, *process_all!(exp.body)
     res.line(exp.line)
     @current_method = nil
-    @controller[@visibility][name] = res unless @controller.nil?
+
+    if @current_class
+      @current_class.add_method @visibility, name, res, @file_name
+    elsif @current_module
+      @current_module.add_method @visibility, name, res, @file_name
+    end
 
     res
   end
 
   #Look for before_filters and add fake ones if necessary
   def process_iter exp
-    if exp.block_call.method == :before_filter
-      add_fake_filter exp
+    if @current_method.nil? and call? exp.block_call
+      block_call_name = exp.block_call.method
+
+      if block_call_name == :before_filter  or block_call_name == :before_action
+        add_fake_filter exp
+      else
+        super
+      end
     else
       super
     end
@@ -211,13 +251,13 @@ class Brakeman::ControllerProcessor < Brakeman::BaseProcessor
 
   #Sets default layout for renders inside Controller
   def set_layout_name
-    return if @controller[:layout]
+    return if @current_class.layout
 
-    name = underscore(@controller[:name].to_s.split("::")[-1].gsub("Controller", ''))
+    name = underscore(@current_class.name.to_s.split("::")[-1].gsub("Controller", ''))
 
     #There is a layout for this Controller
     if @app_tree.layout_exists?(name)
-      @controller[:layout] = "layouts/#{name}"
+      @current_class.layout = "layouts/#{name}"
     end
   end
 
@@ -226,7 +266,7 @@ class Brakeman::ControllerProcessor < Brakeman::BaseProcessor
   #We build a new method and process that the same way as usual
   #methods and filters.
   def add_fake_filter exp
-    unless @controller
+    unless @current_class
       Brakeman.debug "Skipping before_filter outside controller: #{exp}"
       return exp
     end
@@ -250,8 +290,8 @@ class Brakeman::ControllerProcessor < Brakeman::BaseProcessor
 
     #Build Sexp for filter method
     body = Sexp.new(:lasgn,
-                    block_variable, 
-                    Sexp.new(:call, Sexp.new(:const, @controller[:name]), :new))
+                    block_variable,
+                    Sexp.new(:call, Sexp.new(:const, @current_class.name), :new))
 
     filter_method = Sexp.new(:defn, filter_name, Sexp.new(:args), body).concat(block_inner).line(exp.line)
 
@@ -261,5 +301,26 @@ class Brakeman::ControllerProcessor < Brakeman::BaseProcessor
     @visibility = vis
     process before_filter_call
     exp
+  end
+
+  def add_lambda_filter exp
+    # Convert into regular block call
+    e = exp.dup
+    lambda_node = e.delete_at(3)
+    result = Sexp.new(:iter, e).line(e.line)
+
+    # Add block arguments
+    if node_type? lambda_node[2], :args
+      result << lambda_node[2].last
+    else
+      result << s(:args)
+    end
+
+    # Add block contents
+    if sexp? lambda_node[3]
+      result << lambda_node[3]
+    end
+
+    add_fake_filter result
   end
 end

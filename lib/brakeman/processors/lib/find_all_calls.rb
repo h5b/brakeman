@@ -1,6 +1,6 @@
-require 'brakeman/processors/base_processor'
+require 'brakeman/processors/lib/basic_processor'
 
-class Brakeman::FindAllCalls < Brakeman::BaseProcessor
+class Brakeman::FindAllCalls < Brakeman::BasicProcessor
   attr_reader :calls
 
   def initialize tracker
@@ -9,6 +9,7 @@ class Brakeman::FindAllCalls < Brakeman::BaseProcessor
     @current_method = nil
     @in_target = false
     @calls = []
+    @cache = {}
   end
 
   #Process the given source. Provide either class and method being searched
@@ -22,12 +23,14 @@ class Brakeman::FindAllCalls < Brakeman::BaseProcessor
   end
 
   #Process body of method
-  def process_methdef exp
+  def process_defn exp
+    return exp unless @current_method
     process_all exp.body
   end
 
   #Process body of method
-  def process_selfdef exp
+  def process_defs exp
+    return exp unless @current_method
     process_all exp.body
   end
 
@@ -41,7 +44,7 @@ class Brakeman::FindAllCalls < Brakeman::BaseProcessor
     exp
   end
 
-  def process_call_with_block exp
+  def process_iter exp
     call = exp.block_call
 
     if call.node_type == :call
@@ -61,8 +64,6 @@ class Brakeman::FindAllCalls < Brakeman::BaseProcessor
 
     exp
   end
-
-  alias process_iter process_call_with_block
 
   #Calls to render() are converted to s(:render, ...) but we would
   #like them in the call cache still for speed
@@ -105,6 +106,19 @@ class Brakeman::FindAllCalls < Brakeman::BaseProcessor
     exp
   end
 
+  # Process a dynamic regex like a call
+  def process_dregx exp
+    exp.each { |arg| process arg if sexp? arg }
+
+    @calls << { :target => nil,
+                :method => :brakeman_regex_interp,
+                :call => exp,
+                :nested => false,
+                :location => make_location }
+
+    exp
+  end
+
   #Process an assignment like a call
   def process_attrasgn exp
     process_call exp
@@ -114,7 +128,7 @@ class Brakeman::FindAllCalls < Brakeman::BaseProcessor
 
   #Gets the target of a call as a Symbol
   #if possible
-  def get_target exp
+  def get_target exp, include_calls = false
     if sexp? exp
       case exp.node_type
       when :ivar, :lvar, :const, :lit
@@ -122,13 +136,26 @@ class Brakeman::FindAllCalls < Brakeman::BaseProcessor
       when :true, :false
         exp[0]
       when :colon2
-        begin
-          class_name exp
-        rescue StandardError
-          exp
-        end
+        class_name exp
       when :self
         @current_class || @current_module || nil
+      when :params, :session, :cookies
+        exp.node_type
+      when :call, :safe_call
+        if include_calls
+          if exp.target.nil?
+            exp.method
+          else
+            t = get_target(exp.target, :include_calls)
+            if t.is_a? Symbol
+              :"#{t}.#{exp.method}"
+            else
+              exp
+            end
+          end
+        else
+          exp
+        end
       else
         exp
       end
@@ -140,8 +167,10 @@ class Brakeman::FindAllCalls < Brakeman::BaseProcessor
   #Returns method chain as an array
   #For example, User.human.alive.all would return [:User, :human, :alive, :all]
   def get_chain call
-    if node_type? call, :call, :attrasgn
+    if node_type? call, :call, :attrasgn, :safe_call, :safe_attrasgn
       get_chain(call.target) + [call.method]
+    elsif call.nil?
+      []
     else
       [get_target(call)]
     end
@@ -149,11 +178,18 @@ class Brakeman::FindAllCalls < Brakeman::BaseProcessor
 
   def make_location
     if @current_template
-      { :type => :template,
+      key = [@current_template, @current_file]
+      cached = @cache[key]
+      return cached if cached
+
+      @cache[key] = { :type => :template,
         :template => @current_template,
         :file => @current_file }
     else
-      { :type => :class,
+      key = [@current_class, @current_method, @current_file]
+      cached = @cache[key]
+      return cached if cached
+      @cache[key] = { :type => :class,
         :class => @current_class,
         :method => @current_method,
         :file => @current_file }
@@ -170,6 +206,8 @@ class Brakeman::FindAllCalls < Brakeman::BaseProcessor
       @in_target = true
       process target
       @in_target = already_in_target
+
+      target = get_target(target, :include_calls)
     end
 
     method = exp.method

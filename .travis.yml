@@ -1,12 +1,16 @@
-script: "ruby test/test.rb"
+script: "bundle exec ruby test/test.rb"
 
 branches:
   only:
     - master
 
 rvm:
-  - "1.8.7"
   - "1.9.3"
-  - "2.0.0"
-  - "jruby-18mode"
-  - "jruby-19mode"
+  - "2.2.2"
+  - "2.3.0"
+
+addons:
+  code_climate:
+    repo_token: 521d341f3320acda1902d0db0a3a92fb16b11ebfe3d5ab730218d4fc0fb3db13
+
+sudo: false

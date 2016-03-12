@@ -7,7 +7,7 @@ require 'brakeman/checks/base_check'
 class Brakeman::CheckUnsafeReflection < Brakeman::BaseCheck
   Brakeman::Checks.add self
 
-  @description = "Checks for Unsafe Reflection"
+  @description = "Checks for unsafe reflection"
 
   def run_check
     reflection_methods = [:constantize, :safe_constantize, :const_get, :qualified_const_get]
@@ -38,13 +38,13 @@ class Brakeman::CheckUnsafeReflection < Brakeman::BaseCheck
     end
 
     if confidence
-      message = "Unsafe Reflection method #{method} called with #{friendly_type_of input}"
+      message = "Unsafe reflection method #{method} called with #{friendly_type_of input}"
 
       warn :result => result,
         :warning_type => "Remote Code Execution",
         :warning_code => :unsafe_constantize,
         :message => message,
-        :user_input => input.match,
+        :user_input => input,
         :confidence => confidence
     end
   end

@@ -1,17 +1,13 @@
-Brakeman.load_brakeman_dependency 'multi_json'
-require 'brakeman/report/initializers/multi_json'
-
 class Brakeman::Report::JSON < Brakeman::Report::Base
   def generate_report
     errors = tracker.errors.map{|e| { :error => e[:error], :location => e[:backtrace][0] }}
-    app_path = tracker.options[:app_path]
 
     warnings = convert_to_hashes all_warnings
 
     ignored = convert_to_hashes ignored_warnings
 
     scan_info = {
-      :app_path => File.expand_path(tracker.options[:app_path]),
+      :app_path => tracker.app_path,
       :rails_version => rails_version,
       :security_warnings => all_warnings.length,
       :start_time => tracker.start_time.to_s,
@@ -33,7 +29,7 @@ class Brakeman::Report::JSON < Brakeman::Report::Base
       :errors => errors
     }
 
-    MultiJson.dump(report_info, :pretty => true)
+    JSON.pretty_generate report_info
   end
 
   def convert_to_hashes warnings
@@ -41,6 +37,6 @@ class Brakeman::Report::JSON < Brakeman::Report::Base
       hash = w.to_hash
       hash[:file] = warning_file w
       hash
-    end.sort_by { |w| w[:file] }
+    end.sort_by { |w| "#{w[:fingerprint]}#{w[:line]}" }
   end
 end

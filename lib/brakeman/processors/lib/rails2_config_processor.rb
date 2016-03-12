@@ -1,6 +1,8 @@
+require 'brakeman/processors/lib/basic_processor'
+
 #Processes configuration. Results are put in tracker.config.
 #
-#Configuration of Rails via Rails::Initializer are stored in tracker.config[:rails].
+#Configuration of Rails via Rails::Initializer are stored in tracker.config.rails.
 #For example:
 #
 #  Rails::Initializer.run |config|
@@ -11,8 +13,8 @@
 #
 #  tracker.config[:rails][:action_controller][:session_store]
 #
-#Values for tracker.config[:rails] will still be Sexps.
-class Brakeman::Rails2ConfigProcessor < Brakeman::BaseProcessor
+#Values for tracker.config.rails will still be Sexps.
+class Brakeman::Rails2ConfigProcessor < Brakeman::BasicProcessor
   #Replace block variable in
   #
   #  Rails::Initializer.run |config|
@@ -22,7 +24,6 @@ class Brakeman::Rails2ConfigProcessor < Brakeman::BaseProcessor
 
   def initialize *args
     super
-    @tracker.config[:rails] ||= {}
   end
 
   #Use this method to process configuration file
@@ -38,7 +39,7 @@ class Brakeman::Rails2ConfigProcessor < Brakeman::BaseProcessor
 
     if exp.method == :gem and exp.first_arg.value == "erubis"
       Brakeman.notify "[Notice] Using Erubis for ERB templates"
-      @tracker.config[:erubis] = true
+      @tracker.config.erubis = true
     end
 
     exp
@@ -51,13 +52,13 @@ class Brakeman::Rails2ConfigProcessor < Brakeman::BaseProcessor
       attribute = exp.method.to_s[0..-2].to_sym
       if exp.args.length > 1
         #Multiple arguments?...not sure if this will ever happen
-        @tracker.config[:rails][attribute] = exp.args
+        @tracker.config.rails[attribute] = exp.args
       else
-        @tracker.config[:rails][attribute] = exp.first_arg
+        @tracker.config.rails[attribute] = exp.first_arg
       end
     elsif include_rails_config? exp
       options = get_rails_config exp
-      level = @tracker.config[:rails]
+      level = @tracker.config.rails
       options[0..-2].each do |o|
         level[o] ||= {}
         level = level[o]
@@ -73,7 +74,7 @@ class Brakeman::Rails2ConfigProcessor < Brakeman::BaseProcessor
   def process_cdecl exp
     #Set Rails version required
     if exp.lhs == :RAILS_GEM_VERSION
-      @tracker.config[:rails_version] = exp.rhs.value
+      @tracker.config.rails_version = exp.rhs.value
     end
 
     exp

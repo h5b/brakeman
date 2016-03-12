@@ -9,17 +9,19 @@ class Brakeman::ErubisTemplateProcessor < Brakeman::TemplateProcessor
     if sexp? target
       target = process target
     end
+
+    exp.target = target
+    exp.arglist = process exp.arglist
     method = exp.method
 
     #_buf is the default output variable for Erubis
     if node_type?(target, :lvar, :ivar) and (target.value == :_buf or target.value == :@output_buffer)
       if method == :<< or method == :safe_concat
-        exp.arglist = process exp.arglist
 
         arg = exp.first_arg
 
         #We want the actual content
-        if arg.node_type == :call and (arg.method == :to_s or arg.method == :html_safe!)
+        if call? arg and (arg.method == :to_s or arg.method == :html_safe!)
           arg = arg.target
         end
 
@@ -28,12 +30,12 @@ class Brakeman::ErubisTemplateProcessor < Brakeman::TemplateProcessor
         elsif node_type? target, :ivar and target.value == :@output_buffer
           s = Sexp.new :escaped_output, arg
           s.line(exp.line)
-          @current_template[:outputs] << s
+          @current_template.add_output s
           s
         else
           s = Sexp.new :output, arg
           s.line(exp.line)
-          @current_template[:outputs] << s
+          @current_template.add_output s
           s
         end
       elsif method == :to_s
@@ -42,14 +44,9 @@ class Brakeman::ErubisTemplateProcessor < Brakeman::TemplateProcessor
         abort "Unrecognized action on buffer: #{method}"
       end
     elsif target == nil and method == :render
-      exp.arglist = process exp.arglist
       make_render_in_view exp
     else
-      #TODO: Is it really necessary to create a new Sexp here?
-      call = make_call target, method, process_all!(exp.args)
-      call.original_line = exp.original_line
-      call.line(exp.line)
-      call
+      exp
     end
   end
 
@@ -80,10 +77,15 @@ class Brakeman::ErubisTemplateProcessor < Brakeman::TemplateProcessor
 
         if arg.node_type == :str
           ignore
+        elsif exp.method == :safe_append=
+          s = Sexp.new :output, arg
+          s.line(exp.line)
+          @current_template.add_output s
+          s
         else
           s = Sexp.new :escaped_output, arg
           s.line(exp.line)
-          @current_template[:outputs] << s
+          @current_template.add_output s
           s
         end
       else

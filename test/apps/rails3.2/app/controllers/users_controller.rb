@@ -92,4 +92,12 @@ class UsersController < ApplicationController
   def show_detailed_exceptions?
     false # no warning
   end
+
+  def render_text
+    render :text => "oh noes my service"
+  end
+
+  def test_symbol_dos
+    params[:x].to_sym # no warning because this is an optional check
+  end
 end

@@ -20,12 +20,12 @@ class Brakeman::ErbTemplateProcessor < Brakeman::TemplateProcessor
         @inside_concat = false
 
         if exp.second_arg
-          raise Exception.new("Did not expect more than a single argument to _erbout.concat")
+          raise "Did not expect more than a single argument to _erbout.concat"
         end
 
         arg = exp.first_arg
 
-        if arg.node_type == :call and arg.method == :to_s #erb always calls to_s on output
+        if call? arg and arg.method == :to_s #erb always calls to_s on output
           arg = arg.target
         end
 
@@ -34,7 +34,7 @@ class Brakeman::ErbTemplateProcessor < Brakeman::TemplateProcessor
         else
           s = Sexp.new :output, arg
           s.line(exp.line)
-          @current_template[:outputs] << s
+          @current_template.add_output s
           s
         end
       elsif method == :force_encoding
@@ -46,11 +46,9 @@ class Brakeman::ErbTemplateProcessor < Brakeman::TemplateProcessor
       exp.arglist = process(exp.arglist)
       make_render_in_view exp
     else
-      #TODO: Is it really necessary to create a new Sexp here?
-      call = make_call target, method, process_all!(exp.args)
-      call.original_line = exp.original_line
-      call.line(exp.line)
-      call
+      exp.target = target
+      exp.arglist = process(exp.arglist)
+      exp
     end
   end
 

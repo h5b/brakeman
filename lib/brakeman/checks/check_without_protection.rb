@@ -43,10 +43,10 @@ class Brakeman::CheckWithoutProtection < Brakeman::BaseCheck
 
           if input = include_user_input?(call.arglist)
             confidence = CONFIDENCE[:high]
-            user_input = input.match
+          elsif all_literals? call
+            return
           else
             confidence = CONFIDENCE[:med]
-            user_input = nil
           end
 
           warn :result => res, 
@@ -54,11 +54,27 @@ class Brakeman::CheckWithoutProtection < Brakeman::BaseCheck
             :warning_code => :mass_assign_without_protection,
             :message => "Unprotected mass assignment",
             :code => call, 
-            :user_input => user_input,
+            :user_input => input,
             :confidence => confidence
 
         end
       end
     end
+  end
+
+  def all_literals? call
+    call.each_arg do |arg|
+      if hash? arg
+        hash_iterate arg do |k, v|
+          unless node_type? k, :str, :lit, :false, :true and node_type? v, :str, :lit, :false, :true
+            return false
+          end
+        end
+      else
+        return false
+      end
+    end
+
+    true
   end
 end

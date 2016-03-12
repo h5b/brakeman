@@ -27,8 +27,8 @@ module Brakeman
     end
 
     #Process Gemfile
-    def process_gems src, gem_lock = nil
-      GemProcessor.new(@tracker).process_gems src, gem_lock
+    def process_gems gem_files
+      GemProcessor.new(@tracker).process_gems gem_files
     end
 
     #Process route file source
@@ -47,8 +47,8 @@ module Brakeman
 
     #Process variable aliasing in controller source and save it in the
     #tracker.
-    def process_controller_alias name, src, only_method = nil
-      ControllerAliasProcessor.new(@app_tree, @tracker, only_method).process_controller name, src
+    def process_controller_alias name, src, only_method = nil, file = nil
+      ControllerAliasProcessor.new(@app_tree, @tracker, only_method).process_controller name, src, file
     end
 
     #Process a model source
@@ -78,13 +78,13 @@ module Brakeman
         name = ("#{name}.#{called_from}").to_sym
       end
 
-      @tracker.templates[name][:src] = result
-      @tracker.templates[name][:type] = type
+      @tracker.templates[name].src = result
+      @tracker.templates[name].type = type
     end
 
     #Process any calls to render() within a template
     def process_template_alias template
-      TemplateAliasProcessor.new(@tracker, template).process_safely template[:src]
+      TemplateAliasProcessor.new(@tracker, template).process_safely template.src
     end
 
     #Process source for initializing files

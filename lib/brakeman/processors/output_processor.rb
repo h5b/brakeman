@@ -18,15 +18,9 @@ class Brakeman::OutputProcessor < Ruby2Ruby
   def process exp
     begin
       super exp if sexp? exp and not exp.empty?
-    rescue Exception => e
+    rescue => e
       Brakeman.debug "While formatting #{exp}: #{e}\n#{e.backtrace.join("\n")}"
     end
-  end
-
-  def process_lvar exp
-    out = "(local #{exp[0]})"
-    exp.clear
-    out
   end
 
   def process_ignore exp
@@ -47,42 +41,6 @@ class Brakeman::OutputProcessor < Ruby2Ruby
   def process_cookies exp
     exp.clear
     "cookies"
-  end
-
-  def process_string_interp exp
-    out = '"'
-    exp.each do |e|
-      if e.is_a? String
-        out << e
-      else
-        res = process e
-        out << res unless res == "" 
-      end
-    end
-    out << '"'
-    exp.clear
-    out
-  end
-
-  def process_string_eval exp
-    out = "\#{#{process(exp[0])}}"
-    exp.clear
-    out
-  end
-
-  def process_dxstr exp
-    out = "`"
-    out << exp.map! do |e|
-      if e.is_a? String
-        e
-      elsif string? e
-        e[1]
-      else
-        process e
-      end
-    end.join
-    exp.clear
-    out << "`"
   end
 
   def process_rlist exp
@@ -119,9 +77,7 @@ class Brakeman::OutputProcessor < Ruby2Ruby
     return "def #{name}#{args}\n#{body}\nend".gsub(/\n\s*\n+/, "\n")
   end
 
-  alias process_methdef process_defn
-
-  def process_call_with_block exp
+  def process_iter exp
     call = process exp[0]
     block = process_rlist exp[2..-1]
     out = "#{call} do\n #{block}\n end"
@@ -212,33 +168,4 @@ class Brakeman::OutputProcessor < Ruby2Ruby
     exp.clear
     out
   end
-
-  #This is copied from Ruby2Ruby, except the :string_eval type has been added
-  def util_dthing(type, exp)
-    s = []
-
-    # first item in sexp is a string literal
-    s << dthing_escape(type, exp.shift)
-
-    until exp.empty?
-      pt = exp.shift
-      case pt
-      when Sexp then
-        case pt.first
-        when :str then
-          s << dthing_escape(type, pt.last)
-        when :evstr, :string_eval then
-          s << '#{' << process(pt) << '}' # do not use interpolation here
-        else
-          raise "unknown type: #{pt.inspect}"
-        end
-      else
-        # HACK: raise "huh?: #{pt.inspect}" -- hitting # constants in regexps
-        # do nothing for now
-      end
-    end
-
-    s.join
-  end
-
 end

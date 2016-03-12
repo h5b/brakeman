@@ -1,22 +1,20 @@
 abort "Please run using test/test.rb" unless defined? BrakemanTester
 
-Rails3 = BrakemanTester.run_scan "rails3", "Rails 3", :rails3 => true,
-  :config_file => File.join(TEST_PATH, "apps", "rails3", "config", "brakeman.yml")
-
 class Rails3Tests < Test::Unit::TestCase
   include BrakemanTester::FindWarning
   include BrakemanTester::CheckExpected
   
   def report
-    Rails3
+    @@report ||= BrakemanTester.run_scan "rails3", "Rails 3", :rails3 => true,
+      :config_file => File.join(TEST_PATH, "apps", "rails3", "config", "brakeman.yml")
   end
 
   def expected
     @expected ||= {
       :controller => 1,
-      :model => 8,
+      :model => 9,
       :template => 38,
-      :generic => 63
+      :generic => 74
     }
 
     if RUBY_PLATFORM == 'java'
@@ -31,7 +29,7 @@ class Rails3Tests < Test::Unit::TestCase
   end
 
   def test_config_sanity
-    assert_equal 'utf-8', report[:config][:rails][:encoding].value
+    assert_equal 'utf-8', report[:config].rails[:encoding].value
   end
 
   def test_eval_params
@@ -57,7 +55,7 @@ class Rails3Tests < Test::Unit::TestCase
   def test_command_injection_params_interpolation
     assert_warning :type => :warning,
       :warning_code => 14,
-      :fingerprint => "eb5287a6638bce4be342627db12d03f1e5b51175ed13549920921e3659c21df4",
+      :fingerprint => "d68453d17bca16814e8eaffdce5b1dcf3e87aeeca2d94f3dcf78e309cb1b29c6",
       :warning_type => "Command Injection",
       :line => 34,
       :message => /^Possible command injection near line 34:/,
@@ -95,7 +93,7 @@ class Rails3Tests < Test::Unit::TestCase
   def test_command_injection_capture2
     assert_warning :type => :warning,
       :warning_code => 14,
-      :fingerprint => "744cb371d69e757edd75bf6d58c610e3e813ff2b75b353c4c89c67274e4a35bb",
+      :fingerprint => "a9e14a8381114ec58551a94c281c36782ec9d6d91d93c346e6e4f7a6f32e9c25",
       :warning_type => "Command Injection",
       :line => 146,
       :message => /^Possible\ command\ injection/,
@@ -106,7 +104,7 @@ class Rails3Tests < Test::Unit::TestCase
   def test_command_injection_capture2e
     assert_warning :type => :warning,
       :warning_code => 14,
-      :fingerprint => "521c0a714d14ae878305ce737a2bdd5897dcea154c0622b14806ed6e6c60f526",
+      :fingerprint => "99283cfdb2799fc278d5e474d11dc952ead57861e29470cf5ac16629a5b07fb2",
       :warning_type => "Command Injection",
       :line => 147,
       :message => /^Possible\ command\ injection/,
@@ -117,7 +115,7 @@ class Rails3Tests < Test::Unit::TestCase
   def test_command_injection_capture3
     assert_warning :type => :warning,
       :warning_code => 14,
-      :fingerprint => "b75a4b21f55912860d675ac300de862f6b2050688b32f745ea8944832e5e699f",
+      :fingerprint => "1c7506f2977852c07f8e41dcdad205794048b258b557e7d322acf86fab0a6877",
       :warning_type => "Command Injection",
       :line => 148,
       :message => /^Possible\ command\ injection/,
@@ -139,7 +137,7 @@ class Rails3Tests < Test::Unit::TestCase
   def test_command_injection_pipeline_r
     assert_warning :type => :warning,
       :warning_code => 14,
-      :fingerprint => "987aad17f377a6101d5bd3e1611ae3716b276f319c3f91b69efd93717d993ea7",
+      :fingerprint => "f28aa6e2e73662dd58169db727fc30099da36a9e0d1817375bb257faed376e52",
       :warning_type => "Command Injection",
       :line => 150,
       :message => /^Possible\ command\ injection/,
@@ -172,7 +170,7 @@ class Rails3Tests < Test::Unit::TestCase
   def test_command_injection_spawn
     assert_warning :type => :warning,
       :warning_code => 14,
-      :fingerprint => "6b25cb3fa42bb234319ddf690a164eda038b6f000e501fbfa872fb5fa627609b",
+      :fingerprint => "73d4d3114ea536247c38a4e0d5bbcde047ea3f304d2e6a22b1693003d5135409",
       :warning_type => "Command Injection",
       :line => 153,
       :message => /^Possible\ command\ injection/,
@@ -395,10 +393,22 @@ class Rails3Tests < Test::Unit::TestCase
 
   def test_attribute_restriction
     assert_warning :type => :model,
+      :warning_code => 19,
+      :fingerprint => "91d73b1b9d6920156b920729c0146292eb9f10f4ba9515740442dbe82d4dee78",
       :warning_type => "Attribute Restriction",
-      :message => /^Mass assignment is not restricted using /,
+      :line => 1,
+      :message => /^Mass\ assignment\ is\ not\ restricted\ using\ /,
       :confidence => 0,
-      :file => /account, user\.rb/
+      :relative_path => "app/models/account.rb"
+
+    assert_warning :type => :model,
+      :warning_code => 19,
+      :fingerprint => "b325ae8a4570599cde146875ae86427506befae36a3b4a97ce2223930846fec5",
+      :warning_type => "Attribute Restriction",
+      :line => 1,
+      :message => /^Mass\ assignment\ is\ not\ restricted\ using\ /,
+      :confidence => 0,
+      :relative_path => "app/models/user.rb"
   end
 
   def test_attr_protected
@@ -669,6 +679,56 @@ class Rails3Tests < Test::Unit::TestCase
       :message => /^Possible\ SQL\ injection/,
       :confidence => 1,
       :file => /underline_model\.rb/
+  end
+
+  def test_sql_injection_delete_all
+    assert_warning :type => :warning,
+      :warning_code => 0,
+      :fingerprint => "4045f9ab95a70f3674f6e1ff7c1f0ac7bdd9ab39bf111f1d0c0b7a386643fbff",
+      :warning_type => "SQL Injection",
+      :line => 57,
+      :message => /^Possible\ SQL\ injection/,
+      :confidence => 0,
+      :relative_path => "app/controllers/other_controller.rb",
+      :user_input => s(:call, s(:params), :[], s(:lit, :name))
+  end
+
+  def test_sql_injection_destroy_all
+    assert_warning :type => :warning,
+      :warning_code => 0,
+      :fingerprint => "7bbc1feebc89050e053bd3a24b9b00fe5d1879650368e82ee22b3cbc371a9ec3",
+      :warning_type => "SQL Injection",
+      :line => 58,
+      :message => /^Possible\ SQL\ injection/,
+      :confidence => 0,
+      :relative_path => "app/controllers/other_controller.rb",
+      :user_input => s(:call, s(:call, s(:const, :User), :current), :humanity)
+  end
+
+  def test_sql_injection_to_s_value
+    assert_warning :type => :warning,
+      :warning_code => 0,
+      :fingerprint => "0cf32bcc2320f59c97d4f5e051a764ee4fe7af987149ff118bce9900ff7a2faa",
+      :warning_type => "SQL Injection",
+      :line => 64,
+      :message => /^Possible\ SQL\ injection/,
+      :confidence => 1,
+      :relative_path => "app/controllers/other_controller.rb",
+      :user_input => s(:call, nil, :product_action_type_key)
+
+    assert_warning :type => :warning,
+      :warning_code => 0,
+      :fingerprint => "6066950e19a729359e867b882323ef75334791bdceac75a16f586fc53f3318a0",
+      :warning_type => "SQL Injection",
+      :line => 68,
+      :message => /^Possible\ SQL\ injection/,
+      :confidence => 1,
+      :relative_path => "app/controllers/other_controller.rb",
+      :user_input => s(:lvar, :status)
+
+    assert_no_warning :type => :warning,
+      :warning_code => 0,
+      :fingerprint => "c36f33e3b004e081622f1829be288ebdad673a7bf04922eb1d2b9a3d701362a1"
   end
 
   def test_escape_once
@@ -995,12 +1055,12 @@ class Rails3Tests < Test::Unit::TestCase
   def test_mail_link_CVE_2011_0446
     assert_warning :type => :template,
       :warning_code => 32,
-      :fingerprint => "ca5cb14e201255ecf4904957bba2e12eab64ea2d31c26d7150a431dcdae2f206",
+      :fingerprint => "036a26cc74453c8ca220442bb647911effbb1e6d0b1c47f1131a967a2e0922d5",
       :warning_type => "Mail Link",
       :line => 1,
       :message => /^Vulnerability\ in\ mail_to\ using\ javascrip/,
       :confidence => 0,
-      :file => /Gemfile/
+      :relative_path => "Gemfile.lock"
   end
 
   def test_sql_injection_CVE_2013_0155
@@ -1081,10 +1141,72 @@ class Rails3Tests < Test::Unit::TestCase
 
   def test_denial_of_service_CVE_2013_1854
     assert_no_warning :type => :warning,
+      :warning_code => 55,
+      :fingerprint => "2746b8872d4f46676a8c490a7ac906d23f6b11c9d83b6371ff5895139ec7b43b",
       :warning_type => "Denial of Service",
       :message => /^Rails\ 3\.0\.3\ has\ a\ denial\ of\ service\ vul/,
       :confidence => 1,
       :file => /Gemfile/
+  end
+
+  def test_denial_of_service_CVE_2013_6414
+    assert_warning :type => :warning,
+      :warning_code => 64,
+      :fingerprint => "ee4938ce7bc4aa6f37b3d993d6fed813de6b15e5c1ada41146563207c395b0c5",
+      :warning_type => "Denial of Service",
+      :message => /^Rails\ 3\.0\.3\ has\ a\ denial\ of\ service\ vuln/,
+      :confidence => 1,
+      :line => 49,
+      :relative_path => "Gemfile.lock"
+  end
+
+  def test_number_to_currency_CVE_2014_0081
+    assert_warning :type => :warning,
+      :warning_code => 73,
+      :fingerprint => "86f945934ed965a47c30705141157c44ee5c546d044f8de7d573bfab456e97ce",
+      :warning_type => "Cross Site Scripting",
+      :line => 49,
+      :message => /^Rails\ 3\.0\.3\ has\ a\ vulnerability\ in\ numbe/,
+      :confidence => 1,
+      :relative_path => "Gemfile.lock",
+      :user_input => nil
+  end
+
+  def test_sql_injection_CVE_2013_6417
+    assert_warning :type => :warning,
+      :warning_code => 69,
+      :fingerprint => "2f63d663e9f35ba60ef81d56ffc4fbf0660fbc2067e728836176bc18f610f77f",
+      :warning_type => "SQL Injection",
+      :line => 49,
+      :file => /Gemfile.lock/,
+      :message => /^Rails\ 3\.0\.3\ contains\ a\ SQL\ injection\ vul/,
+      :confidence => 0,
+      :relative_path => "Gemfile.lock",
+      :user_input => nil
+  end
+
+  def test_denial_of_service_CVE_2014_0082
+    assert_warning :type => :warning,
+      :warning_code => 75,
+      :fingerprint => "99b6df435353f17dff4b0d7dfeb5f21e5c0e8045dc73533e456baf78f1fc2215",
+      :warning_type => "Denial of Service",
+      :line => 49,
+      :message => /^Rails\ 3\.0\.3\ has\ a\ denial\ of\ service\ vuln/,
+      :confidence => 0,
+      :relative_path => "Gemfile.lock",
+      :user_input => nil
+  end
+
+  def test_remote_code_execution_CVE_2014_0130
+    assert_warning :type => :warning,
+      :warning_code => 77,
+      :fingerprint => "93393e44a0232d348e4db62276b18321b4cbc9051b702d43ba2fd3287175283c",
+      :warning_type => "Remote Code Execution",
+      :line => nil,
+      :message => /^Rails\ 3\.0\.3\ with\ globbing\ routes\ is\ vuln/,
+      :confidence => 0,
+      :relative_path => "config/routes.rb",
+      :user_input => nil
   end
 
   def test_http_only_session_setting
@@ -1187,5 +1309,29 @@ class Rails3Tests < Test::Unit::TestCase
       :message => /^YAML\.parse_stream\ called\ with\ model\ attr/,
       :confidence => 1,
       :file => /home_controller\.rb/
+  end
+
+  def test_CVE_2015_3227
+    assert_warning :type => :warning,
+      :warning_code => 88,
+      :fingerprint => "ab42647fbdea61e25c4b794e82a8b315054e2fac4328bb3fd4be6a744889a987",
+      :warning_type => "Denial of Service",
+      :line => 49,
+      :message => /^Rails\ 3\.0\.3\ is\ vulnerable\ to\ denial\ of\ s/,
+      :confidence => 1,
+      :relative_path => "Gemfile.lock",
+      :user_input => nil
+  end
+
+  def test_denial_of_service_CVE_2015_7576
+    assert_warning :type => :warning,
+      :warning_code => 94,
+      :fingerprint => "5945a9b096557ee5771c2dd12ea6cbec933b662d169e559f524ba01c44bf2452",
+      :warning_type => "Denial of Service",
+      :line => 49,
+      :message => /^Rails\ 3\.0\.3\ is\ vulnerable\ to\ denial\ of\ s/,
+      :confidence => 1,
+      :relative_path => "Gemfile.lock",
+      :user_input => nil
   end
 end

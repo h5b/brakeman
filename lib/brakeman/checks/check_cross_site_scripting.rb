@@ -35,55 +35,14 @@ class Brakeman::CheckCrossSiteScripting < Brakeman::BaseCheck
 
   #Run check
   def run_check
-    @ignore_methods = Set[:button_to, :check_box, :content_tag, :escapeHTML, :escape_once,
-                           :field_field, :fields_for, :h, :hidden_field,
-                           :hidden_field, :hidden_field_tag, :image_tag, :label,
-                           :link_to, :mail_to, :radio_button, :select,
-                           :submit_tag, :text_area, :text_field,
-                           :text_field_tag, :url_encode, :url_for,
-                           :will_paginate].merge tracker.options[:safe_methods]
-
-    @models = tracker.models.keys
-    @inspect_arguments = tracker.options[:check_arguments]
-
-    @known_dangerous = Set[:truncate, :concat]
-
-    if version_between? "2.0.0", "3.0.5"
-      @known_dangerous << :auto_link
-    elsif version_between? "3.0.6", "3.0.99"
-      @ignore_methods << :auto_link
-    end
-
-    if version_between? "2.0.0", "2.3.14"
-      @known_dangerous << :strip_tags
-    end
-
-    json_escape_on = false
-    initializers = tracker.check_initializers :ActiveSupport, :escape_html_entities_in_json=
-    initializers.each {|result| json_escape_on = true?(result.call.first_arg) }
-
-    if tracker.config[:rails][:active_support] and
-      true? tracker.config[:rails][:active_support][:escape_html_entities_in_json]
-
-        json_escape_on = true
-    elsif version_between? "4.0.0", "5.0.0"
-      json_escape_on = true
-    end
-
-    if !json_escape_on or version_between? "0.0.0", "2.0.99"
-      @known_dangerous << :to_json
-      Brakeman.debug("Automatic to_json escaping not enabled, consider to_json dangerous")
-    else
-      @safe_input_attributes << :to_json
-      Brakeman.debug("Automatic to_json escaping is enabled.")
-    end
+    setup
 
     tracker.each_template do |name, template|
       Brakeman.debug "Checking #{name} for XSS"
 
       @current_template = template
 
-      template[:outputs].each do |out|
+      template.each_output do |out|
         unless check_for_immediate_xss out
           @matched = false
           @mark = false
@@ -98,9 +57,15 @@ class Brakeman::CheckCrossSiteScripting < Brakeman::BaseCheck
 
     if exp.node_type == :output
       out = exp.value
-    elsif exp.node_type == :escaped_output and raw_call? exp
-      out = exp.value.first_arg
+    elsif exp.node_type == :escaped_output
+      if raw_call? exp
+        out = exp.value.first_arg
+      elsif html_safe_call? exp
+        out = exp.value.target
+      end
     end
+
+    return if call? out and ignore_call? out.target, out.method
 
     if input = has_immediate_user_input?(out)
       add_result exp
@@ -134,17 +99,11 @@ class Brakeman::CheckCrossSiteScripting < Brakeman::BaseCheck
         link_path = "cross_site_scripting"
         warning_code = :cross_site_scripting
 
-        if node_type?(out, :call, :attrasgn) && out.method == :to_json
+        if node_type?(out, :call, :safe_call, :attrasgn, :safe_attrasgn) && out.method == :to_json
           message += " in JSON hash"
           link_path += "_to_json"
           warning_code = :xss_to_json
         end
-
-        code = if match == out
-                 nil
-               else
-                 match
-               end
 
         warn :template => @current_template,
           :warning_type => "Cross Site Scripting",
@@ -182,8 +141,12 @@ class Brakeman::CheckCrossSiteScripting < Brakeman::BaseCheck
   #Otherwise, ignore
   def process_escaped_output exp
     unless check_for_immediate_xss exp
-      if raw_call? exp and not duplicate? exp
-        process exp.value.first_arg
+      if not duplicate? exp
+        if raw_call? exp
+          process exp.value.first_arg
+        elsif html_safe_call? exp
+          process exp.value.target
+        end
       end
     end
     exp
@@ -212,11 +175,14 @@ class Brakeman::CheckCrossSiteScripting < Brakeman::BaseCheck
           add_result exp
 
           link_path = "cross_site_scripting"
+          warning_code = :cross_site_scripting
+
           if @known_dangerous.include? exp.method
             confidence = CONFIDENCE[:high]
             if exp.method == :to_json
               message += " in JSON hash"
               link_path += "_to_json"
+              warning_code = :xss_to_json
             end
           else
             confidence = CONFIDENCE[:low]
@@ -224,10 +190,10 @@ class Brakeman::CheckCrossSiteScripting < Brakeman::BaseCheck
 
           warn :template => @current_template,
             :warning_type => "Cross Site Scripting",
-            :warning_code => :xss_to_json,
+            :warning_code => warning_code,
             :message => message,
             :code => exp,
-            :user_input => @matched.match,
+            :user_input => @matched,
             :confidence => confidence,
             :link_path => link_path
         end
@@ -280,7 +246,7 @@ class Brakeman::CheckCrossSiteScripting < Brakeman::BaseCheck
   end
 
   #Process as default
-  def process_string_interp exp
+  def process_dstr exp
     process_default exp
   end
 
@@ -301,14 +267,80 @@ class Brakeman::CheckCrossSiteScripting < Brakeman::BaseCheck
     exp
   end
 
+  def process_case exp
+    #Ignore user input in case value
+    #TODO: also ignore when values
+
+    current = 2
+    while current < exp.length
+      process exp[current] if exp[current]
+      current += 1
+    end
+
+    exp
+  end
+
+  def setup
+    @ignore_methods = Set[:==, :!=, :button_to, :check_box, :content_tag, :escapeHTML, :escape_once,
+                           :field_field, :fields_for, :h, :hidden_field,
+                           :hidden_field, :hidden_field_tag, :image_tag, :label,
+                           :link_to, :mail_to, :radio_button, :select,
+                           :submit_tag, :text_area, :text_field,
+                           :text_field_tag, :url_encode, :url_for,
+                           :will_paginate].merge tracker.options[:safe_methods]
+
+    @models = tracker.models.keys
+    @inspect_arguments = tracker.options[:check_arguments]
+
+    @known_dangerous = Set[:truncate, :concat]
+
+    if version_between? "2.0.0", "3.0.5"
+      @known_dangerous << :auto_link
+    elsif version_between? "3.0.6", "3.0.99"
+      @ignore_methods << :auto_link
+    end
+
+    if version_between? "2.0.0", "2.3.14" or tracker.config.gem_version(:'rails-html-sanitizer') == '1.0.2'
+      @known_dangerous << :strip_tags
+    end
+
+    if tracker.config.has_gem? :'rails-html-sanitizer' and
+       version_between? "1.0.0", "1.0.2", tracker.config.gem_version(:'rails-html-sanitizer')
+
+      @known_dangerous << :sanitize
+    end
+
+    json_escape_on = false
+    initializers = tracker.check_initializers :ActiveSupport, :escape_html_entities_in_json=
+    initializers.each {|result| json_escape_on = true?(result.call.first_arg) }
+
+    if tracker.config.escape_html_entities_in_json?
+        json_escape_on = true
+    elsif version_between? "4.0.0", "9.9.9"
+      json_escape_on = true
+    end
+
+    if !json_escape_on or version_between? "0.0.0", "2.0.99"
+      @known_dangerous << :to_json
+      Brakeman.debug("Automatic to_json escaping not enabled, consider to_json dangerous")
+    else
+      @safe_input_attributes << :to_json
+      Brakeman.debug("Automatic to_json escaping is enabled.")
+    end
+  end
+
   def raw_call? exp
     exp.value.node_type == :call and exp.value.method == :raw
+  end
+
+  def html_safe_call? exp
+    call? exp.value and exp.value.method == :html_safe
   end
 
   def ignore_call? target, method
     ignored_method?(target, method) or
     safe_input_attribute?(target, method) or
-    ignored_model_method?(method) or
+    ignored_model_method?(target, method) or
     form_builder_method?(target, method) or
     haml_escaped?(target, method) or
     boolean_method?(method) or
@@ -316,15 +348,14 @@ class Brakeman::CheckCrossSiteScripting < Brakeman::BaseCheck
     xml_escaped?(target, method)
   end
 
-  def ignored_model_method? method
-    @matched and
-    @matched.type == :model and
-    IGNORE_MODEL_METHODS.include? method
+  def ignored_model_method? target, method
+    ((@matched and @matched.type == :model) or
+       model_name? target) and
+       IGNORE_MODEL_METHODS.include? method
   end
 
   def ignored_method? target, method
-    target.nil? and
-    (@ignore_methods.include? method or method.to_s =~ IGNORE_LIKE)
+    @ignore_methods.include? method or method.to_s =~ IGNORE_LIKE
   end
 
   def cgi_escaped? target, method
@@ -345,7 +376,7 @@ class Brakeman::CheckCrossSiteScripting < Brakeman::BaseCheck
   end
 
   def safe_input_attribute? target, method
-    target and @safe_input_attributes.include? method
+    target and always_safe_method? method
   end
 
   def boolean_method? method

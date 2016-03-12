@@ -20,17 +20,18 @@ class Brakeman::CheckModelAttrAccessible < Brakeman::BaseCheck
 
   def run_check
     check_models do |name, model|
-      model[:attr_accessible].each do |attribute|
+      model.attr_accessible.each do |attribute|
         next if role_limited? model, attribute
 
         SUSP_ATTRS.each do |susp_attr, confidence|
           if susp_attr.is_a?(Regexp) and susp_attr =~ attribute.to_s or susp_attr == attribute
             warn :model => name,
-              :file => model[:file],
+              :file => model.file,
               :warning_type => "Mass Assignment",
               :warning_code => :dangerous_attr_accessible,
-              :message => "Potentially dangerous attribute '#{attribute}' available for mass assignment",
-              :confidence => confidence
+              :message => "Potentially dangerous attribute available for mass assignment",
+              :confidence => confidence,
+              :code => Sexp.new(:lit, attribute)
             break # Prevent from matching single attr multiple times
           end
         end
@@ -39,14 +40,14 @@ class Brakeman::CheckModelAttrAccessible < Brakeman::BaseCheck
   end
 
   def role_limited? model, attribute
-    role_accessible = model[:options][:role_accessible]
+    role_accessible = model.role_accessible
     return if role_accessible.nil?
     role_accessible.include? attribute
   end
 
   def check_models
     tracker.models.each do |name, model|
-      if !model[:attr_accessible].nil?
+      if !model.attr_accessible.nil?
         yield name, model
       end
     end

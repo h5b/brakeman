@@ -1,64 +1,57 @@
-require 'brakeman/processors/base_processor'
+require 'brakeman/processors/lib/basic_processor'
 
 #Processes Gemfile and Gemfile.lock
-class Brakeman::GemProcessor < Brakeman::BaseProcessor
+class Brakeman::GemProcessor < Brakeman::BasicProcessor
 
   def initialize *args
     super
-
-    @tracker.config[:gems] ||= {}
+    @gem_name_version = /^\s*([-_+.A-Za-z0-9]+) \((\w(\.\w+)*)\)/
   end
 
-  def process_gems src, gem_lock = nil
-    process src
+  def process_gems gem_files
+    @gem_files = gem_files
+    @gemfile = gem_files[:gemfile][:file]
+    process gem_files[:gemfile][:src]
 
-    if gem_lock
-      get_rails_version gem_lock
-      get_json_version gem_lock
-    elsif @tracker.config[:gems][:rails] =~ /(\d+.\d+.\d+)/
-      @tracker.config[:rails_version] = $1
+    if gem_files[:gemlock]
+      process_gem_lock
     end
 
-    if @tracker.config[:rails_version] =~ /^(3|4)\./ and not @tracker.options[:rails3]
-      @tracker.options[:rails3] = true
-      Brakeman.notify "[Notice] Detected Rails #$1 application"
-    end
-
-    if @tracker.config[:gems][:rails_xss]
-      @tracker.config[:escape_html] = true
-
-      Brakeman.notify "[Notice] Escaping HTML by default"
-    end
+    @tracker.config.set_rails_version
   end
 
   def process_call exp
     if exp.target == nil and exp.method == :gem
       gem_name = exp.first_arg
+      return exp unless string? gem_name
+
       gem_version = exp.second_arg
 
-      if string? gem_version
-        @tracker.config[:gems][gem_name.value.to_sym] = gem_version.value
-      else
-        @tracker.config[:gems][gem_name.value.to_sym] = ">=0.0.0"
-      end
+      version = if string? gem_version
+                  gem_version.value
+                else
+                  nil
+                end
+
+      @tracker.config.add_gem gem_name.value, version, @gemfile, exp.line
     end
 
     exp
   end
-  
+
+  def process_gem_lock
+    line_num = 1
+    file = @gem_files[:gemlock][:file]
+    @gem_files[:gemlock][:src].each_line do |line|
+      set_gem_version_and_file line, file, line_num
+      line_num += 1
+    end
+  end
+
   # Supports .rc2 but not ~>, >=, or <=
-  def get_version name, gem_lock
-    if gem_lock =~ /\s#{name} \((\w(\.\w+)*)\)(?:\n|\r\n)/ 
-      $1
-    end 
-  end
-
-  def get_rails_version gem_lock
-    @tracker.config[:rails_version] = get_version("rails", gem_lock)
-  end
-
-  def get_json_version gem_lock
-    @tracker.config[:gems][:json] = get_version("json", gem_lock)
-    @tracker.config[:gems][:json_pure] = get_version("json_pure", gem_lock)
+  def set_gem_version_and_file line, file, line_num
+    if line =~ @gem_name_version
+      @tracker.config.add_gem $1, $2, file, line_num
+    end
   end
 end

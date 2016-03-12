@@ -47,12 +47,10 @@ class Brakeman::Report::HTML < Brakeman::Report::Base
     out_processor = Brakeman::OutputProcessor.new
     template_rows = {}
     tracker.templates.each do |name, template|
-      unless template[:outputs].empty?
-        template[:outputs].each do |out|
-          out = CGI.escapeHTML(out_processor.format(out))
-          template_rows[name] ||= []
-          template_rows[name] << out.gsub("\n", ";").gsub(/\s+/, " ")
-        end
+      template.each_output do |out|
+        out = CGI.escapeHTML(out_processor.format(out))
+        template_rows[name] ||= []
+        template_rows[name] << out.gsub("\n", ";").gsub(/\s+/, " ")
       end
     end
 
@@ -83,7 +81,7 @@ class Brakeman::Report::HTML < Brakeman::Report::Base
     warning["Message"] = with_context original, warning["Message"]
     warning["Warning Type"] = with_link original, warning["Warning Type"]
     warning["Called From"] = original.called_from
-    warning["Template Name"] = original.template[:name]
+    warning["Template Name"] = original.template.name
     warning
   end
 
@@ -139,7 +137,17 @@ class Brakeman::Report::HTML < Brakeman::Report::Base
       message
     end <<
     "<table id='#{code_id}' class='context' style='display:none'>" <<
-    "<caption>#{warning_file(warning) || ''}</caption>"
+    "<caption>#{CGI.escapeHTML warning_file(warning) || ''}</caption>"
+
+    output << <<-HTML
+      <thead style='display:none'>
+        <tr>
+          <th>line number</th>
+          <th>line content</th>
+        </tr>
+      </thead>
+      <tbody>
+    HTML
 
     unless context.empty?
       if warning.line - 1 == 1 or warning.line + 1 == 1
@@ -186,12 +194,17 @@ class Brakeman::Report::HTML < Brakeman::Report::Base
       end
     end
 
-    output << "</table></div>"
+    output << "</tbody></table></div>"
   end
 
   #Escape warning message and highlight user input in HTML output
   def html_message warning, message
     message = CGI.escapeHTML(message)
+
+    if warning.file
+      github_url = github_url warning.file, warning.line
+      message.gsub!(/(near line \d+)/, "<a href=\"#{github_url}\" target='_blank'>\\1</a>") if github_url
+    end
 
     if @highlight_user_input and warning.user_input
       user_input = CGI.escapeHTML(warning.format_user_input)

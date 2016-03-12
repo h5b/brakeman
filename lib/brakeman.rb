@@ -1,5 +1,4 @@
 require 'rubygems'
-require 'yaml'
 require 'set'
 
 module Brakeman
@@ -17,16 +16,20 @@ module Brakeman
   #Options:
   #
   #  * :app_path - path to root of Rails app (required)
+  #  * :additional_checks_path - array of additional directories containing additional out-of-tree checks to run
+  #  * :additional_libs_path - array of additional application relative lib directories (ex. app/mailers) to process
   #  * :assume_all_routes - assume all methods are routes (default: true)
   #  * :check_arguments - check arguments of methods (default: true)
-  #  * :collapse_mass_assignment - report unprotected models in single warning (default: true)
+  #  * :collapse_mass_assignment - report unprotected models in single warning (default: false)
   #  * :combine_locations - combine warning locations (default: true)
   #  * :config_file - configuration file
   #  * :escape_html - escape HTML by default (automatic)
   #  * :exit_on_warn - return false if warnings found, true otherwise. Not recommended for library use (default: false)
+  #  * :github_repo - github repo to use for file links (user/repo[/path][@ref])
   #  * :highlight_user_input - highlight user input in reported warnings (default: true)
   #  * :html_style - path to CSS file
   #  * :ignore_model_output - consider models safe (default: false)
+  #  * :index_libs - add libraries to call index (default: true)
   #  * :interprocedural - limited interprocedural processing of method calls (default: false)
   #  * :message_limit - limit length of messages
   #  * :min_confidence - minimum confidence (0-2, 0 is highest)
@@ -69,32 +72,35 @@ module Brakeman
       options.delete :quiet
     end
 
-    options = default_options.merge(load_options(options[:config_file], options[:quiet])).merge(options)
+    options = default_options.merge(load_options(options)).merge(options)
 
     if options[:quiet].nil? and not command_line
       options[:quiet] = true
     end
 
-    options[:app_path] = File.expand_path(options[:app_path])
     options[:output_formats] = get_output_formats options
+    options[:github_url] = get_github_url options
 
     options
   end
 
-  CONFIG_FILES = [
-    File.expand_path("./config/brakeman.yml"),
-    File.expand_path("~/.brakeman/config.yml"),
-    File.expand_path("/etc/brakeman/config.yml")
-  ]
-
   #Load options from YAML file
-  def self.load_options custom_location, quiet
+  def self.load_options line_options
+    custom_location = line_options[:config_file]
+    quiet = line_options[:quiet]
+    app_path = line_options[:app_path]
+
     #Load configuration file
-    if config = config_file(custom_location)
-      options = YAML.load_file config
+    if config = config_file(custom_location, app_path)
+      require 'date' # https://github.com/dtao/safe_yaml/issues/80
+      require 'safe_yaml/load'
+      options = SafeYAML.load_file config, :deserialize_symbols => true
 
       if options
         options.each { |k, v| options[k] = Set.new v if v.is_a? Array }
+
+        # After parsing the yaml config file for options, convert any string keys into symbols.
+        options.keys.select {|k| k.is_a? String}.map {|k| k.to_sym }.each {|k| options[k] = options[k.to_s]; options.delete(k.to_s) }
 
         # notify if options[:quiet] and quiet is nil||false
         notify "[Notice] Using configuration in #{config}" unless (options[:quiet] || quiet)
@@ -108,8 +114,14 @@ module Brakeman
     end
   end
 
-  def self.config_file custom_location = nil
-    supported_locations = [File.expand_path(custom_location || "")] + CONFIG_FILES
+  CONFIG_FILES = [
+    File.expand_path("~/.brakeman/config.yml"),
+    File.expand_path("/etc/brakeman/config.yml")
+  ]
+
+  def self.config_file custom_location, app_path
+    app_config = File.expand_path(File.join(app_path, "config", "brakeman.yml"))
+    supported_locations = [File.expand_path(custom_location || ""), app_config] + CONFIG_FILES
     supported_locations.detect {|f| File.file?(f) }
   end
 
@@ -121,10 +133,11 @@ module Brakeman
       :safe_methods => Set.new,
       :min_confidence => 2,
       :combine_locations => true,
-      :collapse_mass_assignment => true,
+      :collapse_mass_assignment => false,
       :highlight_user_input => true,
       :ignore_redirect_to_model => true,
       :ignore_model_output => false,
+      :index_libs => true,
       :message_limit => 100,
       :parallel_checks => true,
       :relative_path => false,
@@ -166,6 +179,10 @@ module Brakeman
       [:to_tabs]
     when :json, :to_json
       [:to_json]
+    when :markdown, :to_markdown
+      [:to_markdown]
+    when :cc, :to_cc, :codeclimate, :to_codeclimate
+      [:to_codeclimate]
     else
       [:to_s]
     end
@@ -185,6 +202,10 @@ module Brakeman
         :to_tabs
       when /\.json$/i
         :to_json
+      when /\.md$/i
+        :to_markdown
+      when /(\.cc|\.codeclimate)$/i
+        :to_codeclimate
       else
         :to_s
       end
@@ -192,14 +213,40 @@ module Brakeman
   end
   private_class_method :get_formats_from_output_files
 
+  def self.get_github_url options
+    if github_repo = options[:github_repo]
+      full_repo, ref = github_repo.split '@', 2
+      name, repo, path = full_repo.split '/', 3
+      unless name && repo && !(name.empty? || repo.empty?)
+        raise ArgumentError, "Invalid GitHub repository format"
+      end
+      path.chomp '/' if path
+      ref ||= 'master'
+      ['https://github.com', name, repo, 'blob', ref, path].compact.join '/'
+    else
+      nil
+    end
+  end
+  private_class_method :get_github_url
+
   #Output list of checks (for `-k` option)
-  def self.list_checks
+  def self.list_checks options
     require 'brakeman/scanner'
+
+    add_external_checks options
+
+    if options[:list_optional_checks]
+      $stderr.puts "Optional Checks:"
+      checks = Checks.optional_checks
+    else
+      $stderr.puts "Available Checks:"
+      checks = Checks.checks
+    end
+
     format_length = 30
 
-    $stderr.puts "Available Checks:"
     $stderr.puts "-" * format_length
-    Checks.checks.each do |check|
+    checks.each do |check|
       $stderr.printf("%-#{format_length}s%s\n", check.name, check.description)
     end
   end
@@ -216,15 +263,15 @@ module Brakeman
       task_path = File.join("lib", "tasks", "brakeman.rake")
     end
 
-    if not File.exists? rake_path
+    if not File.exist? rake_path
       raise RakeInstallError, "No Rakefile detected"
-    elsif File.exists? task_path
+    elsif File.exist? task_path
       raise RakeInstallError, "Task already exists"
     end
 
     require 'fileutils'
 
-    if not File.exists? "lib/tasks"
+    if not File.exist? "lib/tasks"
       notify "Creating lib/tasks"
       FileUtils.mkdir_p "lib/tasks"
     end
@@ -233,7 +280,7 @@ module Brakeman
 
     FileUtils.cp "#{path}/brakeman/brakeman.rake", task_path
 
-    if File.exists? task_path
+    if File.exist? task_path
       notify "Task created in #{task_path}"
       notify "Usage: rake brakeman:run[output_file]"
     else
@@ -243,6 +290,7 @@ module Brakeman
 
   #Output configuration to YAML
   def self.dump_config options
+    require 'yaml'
     if options[:create_config].is_a? String
       file = options[:create_config]
     else
@@ -261,11 +309,10 @@ module Brakeman
       File.open file, "w" do |f|
         YAML.dump options, f
       end
-      puts "Output configuration to #{file}"
+      notify "Output configuration to #{file}"
     else
-      puts YAML.dump(options)
+      notify YAML.dump(options)
     end
-    exit
   end
 
   #Run a scan. Generally called from Brakeman.run instead of directly.
@@ -279,11 +326,14 @@ module Brakeman
       raise NoBrakemanError, "Cannot find lib/ directory."
     end
 
+    add_external_checks options
+
     #Start scanning
     scanner = Scanner.new options
+    tracker = scanner.tracker
 
-    notify "Processing application in #{options[:app_path]}"
-    tracker = scanner.process
+    notify "Processing application in #{tracker.app_path}"
+    scanner.process
 
     if options[:parallel_checks]
       notify "Running checks in parallel..."
@@ -357,20 +407,20 @@ module Brakeman
 
   # Compare JSON ouptut from a previous scan and return the diff of the two scans
   def self.compare options
-    require 'multi_json'
+    require 'json'
     require 'brakeman/differ'
-    raise ArgumentError.new("Comparison file doesn't exist") unless File.exists? options[:previous_results_json]
+    raise ArgumentError.new("Comparison file doesn't exist") unless File.exist? options[:previous_results_json]
 
     begin
-      previous_results = MultiJson.load(File.read(options[:previous_results_json]), :symbolize_keys => true)[:warnings]
-    rescue MultiJson::DecodeError
+      previous_results = JSON.parse(File.read(options[:previous_results_json]), :symbolize_names => true)[:warnings]
+    rescue JSON::ParserError
       self.notify "Error parsing comparison file: #{options[:previous_results_json]}"
       exit!
     end
 
     tracker = run(options)
 
-    new_results = MultiJson.load(tracker.report.to_json, :symbolize_keys => true)[:warnings]
+    new_results = JSON.parse(tracker.report.to_json, :symbolize_names => true)[:warnings]
 
     Brakeman::Differ.new(new_results, previous_results).diff
   end
@@ -382,8 +432,8 @@ module Brakeman
       require name
     rescue LoadError => e
       $stderr.puts e.message
-      $stderr.puts "Please install the appropriate dependency."
-      exit! -1
+      $stderr.puts "Please install the appropriate dependency: #{name}."
+      exit!(-1)
     end
   end
 
@@ -413,6 +463,12 @@ module Brakeman
     end
 
     tracker.ignored_filter = config
+  end
+
+  def self.add_external_checks options
+    options[:additional_checks_path].each do |path|
+      Brakeman::Checks.initialize_checks path
+    end if options[:additional_checks_path]
   end
 
   class DependencyError < RuntimeError; end
